@@ -380,18 +380,38 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // 优先从 author 对象块提取（这是视频原作者，不是分享者）
-  var authObj = html.match(/"author":\s*\{[^}]*"uniqueId"[^}]*\}/);
-  var authorName = '', authorId = '', authorAvatar = '';
-  if (authObj) {
-    var aNick = authObj[0].match(/"nickname":"([^"]+)"/);
-    if (aNick) authorName = aNick[1];
-    var aUid = authObj[0].match(/"uniqueId":"([^"]+)"/);
-    if (aUid) authorId = aUid[1];
-    var aAv = authObj[0].match(/"avatarLarger":"([^"]+)"/);
-    if (aAv) authorAvatar = aAv[1].replace(/\\u002F/g, '/');
+  var videoUrl = "", cover = "", title = "", authorName = "", authorId = "", authorAvatar = "";
+
+  // 方法1: 用 oEmbed API 获取作者信息（最可靠，返回的是原作者）
+  try {
+    var oembedResp = await fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(realUrl || originalUrl));
+    if (oembedResp.ok) {
+      var oembed = await oembedResp.json();
+      title = oembed.title || "";
+      authorName = oembed.author_name || "";
+      if (oembed.author_url) {
+        var auM = oembed.author_url.match(/@([^/?#]+)/);
+        if (auM) authorId = auM[1];
+      }
+      cover = oembed.thumbnail_url || "";
+    }
+  } catch(e) {}
+
+  // 方法2: 从页面中取视频地址
+  var paMatch = html.match(/"playAddr":"([^"]+)"/);
+  if (paMatch) videoUrl = paMatch[1].replace(/\\u002F/g, '/');
+
+  // 封面/标题兜底
+  if (!cover) {
+    var covMatch = html.match(/"cover":"([^"]+)"/);
+    if (covMatch) cover = covMatch[1].replace(/\\u002F/g, '/');
   }
-  // 兜底：取页面中最后一个值（分享者信息，但总比没有好）
+  if (!title) {
+    var descMatch = html.match(/"desc":"([^"]+)"/);
+    if (descMatch) title = descMatch[1];
+  }
+
+  // 作者信息兜底（从 HTML 提取）
   if (!authorId) {
     var allNick = html.match(/"nickname":"([^"]+)"/g);
     var allUid = html.match(/"uniqueId":"([^"]+)"/g);
@@ -401,27 +421,14 @@ async function parseTiktok(originalUrl) {
     authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
   }
 
-  var paMatch = html.match(/"playAddr":"([^"]+)"/);
-  var coverMatch = html.match(/"cover":"([^"]+)"/);
-  var descMatch = html.match(/"desc":"([^"]+)"/);
+  if (!videoUrl) return fail("未提取到TikTok视频地址");
 
-
-
-  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
-  var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
-  var title = descMatch ? descMatch[1] : '';
-
-  if (!videoUrl) return fail('未提取到TikTok视频地址');
-
-  return ok('tiktok', {
-    type: 'video', title: title || '', desc: title || '',
-    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-    cover: cover || '', url: videoUrl || '', images: [],
+  return ok("tiktok", {
+    type: "video", title: title || "", desc: title || "",
+    author: { name: authorName || "", id: authorId || "", avatar: authorAvatar || "" },
+    cover: cover || "", url: videoUrl || "", images: [],
   });
 }
-
-
-
 // ===== 西瓜视频 =====
 async function parseXigua(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
