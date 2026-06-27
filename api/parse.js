@@ -411,10 +411,18 @@ async function parseTiktok(originalUrl) {
     if (descMatch) title = descMatch[1];
   }
 
-  // 头像兜底：从页面 HTML 中提取
-  if (!authorAvatar) {
-    var avMatch = html.match(/https?:\/\/[^"']*tiktokcdn[^"']*tos-alisg-avt[^"']*(?:jpe?g|webp|png)/i);
-    if (avMatch) authorAvatar = avMatch[0].replace(/\\u002F/g, '/');
+  // 头像：用 uniqueId 去作者主页拿（原作者的，不是分享者的）
+  if (!authorAvatar && authorId) {
+    try {
+      var profileResp = await fetch('https://www.tiktok.com/@' + encodeURIComponent(authorId), {
+        headers: { 'User-Agent': UA, 'Accept': 'text/html' },
+      });
+      if (profileResp.ok) {
+        var profileHtml = await profileResp.text();
+        var avData = profileHtml.match(/data-avatarUrl="([^"]+)"/);
+        if (avData) authorAvatar = decodeURIComponent(avData[1]);
+      }
+    } catch(e) {}
   }
 
   // 作者信息兜底（从 HTML 提取）
