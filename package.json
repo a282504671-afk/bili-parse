@@ -1,5 +1,4 @@
 ﻿{
   "name": "video-parse-bilibili",
-  "version": "1.0.0",
-  "description": "Bilibili video parser for Vercel"
+  "version": "1.0.0"
 }
