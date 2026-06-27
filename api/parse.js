@@ -16,7 +16,7 @@ function detectPlatform(url) {
   if (/ixigua\.com/.test(url)) return 'ixigua';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
   if (/xiaohongshu\.com|xhslink\.com|xhs\.cn/.test(url)) return 'xiaohongshu';
-  if (/weibo\.com/.test(url) || /^https?:\/\/t\.cn\//.test(url)) return 'weibo';
+  if (/weibo\.com/.test(url) || /t\.cn/.test(url)) return 'weibo';
   if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url)) return 'weixin';
   return 'unknown';
 }
@@ -411,6 +411,12 @@ async function parseTiktok(originalUrl) {
     if (descMatch) title = descMatch[1];
   }
 
+  // 头像兜底：从页面 HTML 中提取
+  if (!authorAvatar) {
+    var avMatch = html.match(/https?:\/\/[^"']*tiktokcdn[^"']*tos-alisg-avt[^"']*(?:jpe?g|webp|png)/i);
+    if (avMatch) authorAvatar = avMatch[0].replace(/\\u002F/g, '/');
+  }
+
   // 作者信息兜底（从 HTML 提取）
   if (!authorId) {
     var allNick = html.match(/"nickname":"([^"]+)"/g);
@@ -454,7 +460,22 @@ async function parseXigua(originalUrl) {
     if (idM) authorId = idM[1];
   }
 
-  // 检查是否有视频地址（加密的，大概率拿不到）
+  // 兜底：用 alapi 接口获取视频地址（如果页面拿不到）
+  if (!videoUrl) {
+    try {
+      var apiUrl = 'https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(realUrl || originalUrl);
+      var apiResp = await fetch(apiUrl, { headers: { 'User-Agent': UA } });
+      if (apiResp.ok) {
+        var apiJson = await apiResp.json();
+        if (apiJson.success && apiJson.data && apiJson.data.video_url) {
+          videoUrl = apiJson.data.video_url;
+          if (!title) title = apiJson.data.title || '';
+          if (!cover) cover = apiJson.data.cover_url || '';
+        }
+      }
+    } catch(e) { /* alapi 接口调用失败，忽略 */ }
+  }
+
   if (!title && !cover) return fail('未提取到西瓜视频信息');
 
   return ok('ixigua', {
@@ -546,11 +567,6 @@ async function parseAcfun(originalUrl) {
 
 // ===== 微博 =====
 async function parseWeibo(originalUrl) {
-  // t.cn 短链微博平台外已封锁跳转，直接告知用户
-  if (/^https?:\/\/t\.cn\//.test(originalUrl)) {
-    return fail('微博 t.cn 短链无法在平台外解析。请在微博App内打开后，复制地址栏完整链接（如 m.weibo.cn/detail/xxxxx）再重试');
-  }
-
   // 从各种链接格式里提取 mid
   var mid = null;
 
@@ -558,26 +574,22 @@ async function parseWeibo(originalUrl) {
   var m1 = originalUrl.match(/\/(?:detail|status)\/(\d{10,})/);
   if (m1) mid = m1[1];
 
-  // 格式2: weibo.com/uid/mid
+  // 格式2: weibo.com/数字/mid
   if (!mid) {
-    var m2 = originalUrl.match(/weibo\.com\/\d+\/(\w+)/);
+    var m2 = originalUrl.match(/weibo\.com\/\d+\/(\w+)$/);
     if (m2) mid = m2[1];
   }
 
-  // 格式3: ?mid= 参数
-  if (!mid) {
-    var m3p = originalUrl.match(/[?&]mid=(\d{10,})/);
-    if (m3p) mid = m3p[1];
-  }
-
-  // 格式4: 跳转后从URL或HTML捞mid
+  // 格式3: 从 t.cn 或HTML中提取
   if (!mid) {
     try {
+      // 先尝试跳转
       var realUrl = await resolveRedirect(originalUrl);
       var m3 = realUrl.match(/\/(?:detail|status)\/(\d{10,})/);
       if (m3) mid = m3[1];
+      // 从HTML中捞mid
       if (!mid) {
-        var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/' });
+        var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/', 'User-Agent': UA });
         var m4 = html.match(/["']mid["']\s*:\s*["']?(\d{10,})["']?/);
         if (m4) mid = m4[1];
         var m5 = html.match(/\/(?:detail|status)\/(\d{10,})/);
@@ -586,7 +598,7 @@ async function parseWeibo(originalUrl) {
     } catch(e) {}
   }
 
-  if (!mid) return fail('无法从微博链接中提取视频ID，请使用完整链接（如 m.weibo.cn/detail/xxxxx）');
+  if (!mid) return fail('无法从微博链接中提取视频ID，t.cn短链可能已被拦截');
 
   // 调移动端 statuses 接口
   try {
@@ -634,7 +646,7 @@ async function parseWeibo(originalUrl) {
 
 // ===== 微信视频号（via BUGPK 中转） =====
 async function parseWeixin(originalUrl) {
-  var apiUrl = 'https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl);
+  var apiUrl = 'https://api.bugpk.com/api/?url=' + encodeURIComponent(originalUrl);
   try {
     var res = await fetch(apiUrl, {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
