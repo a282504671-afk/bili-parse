@@ -10,6 +10,7 @@ function fail(msg, code = 500) {
 
 function detectPlatform(url) {
   if (/douyin\.com|iesdouyin\.com/.test(url)) return 'douyin';
+  if (/tiktok\.com|vt\.tiktok\.com/.test(url)) return 'tiktok';
   if (/bilibili\.com|b23\.tv/.test(url)) return 'bilibili';
   if (/acfun\.cn/.test(url)) return 'acfun';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
@@ -372,6 +373,36 @@ async function parseXiaohongshu(originalUrl) {
 }
 
 
+
+// ===== TikTok =====
+async function parseTiktok(originalUrl) {
+  var realUrl = await resolveRedirect(originalUrl);
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
+
+  var nickMatch = html.match(/"nickname":"([^"]+)"/);
+  var avatarMatch = html.match(/"avatarLarger":"([^"]+)"/);
+  var uidMatch = html.match(/"uniqueId":"([^"]+)"/);
+  var paMatch = html.match(/"playAddr":"([^"]+)"/);
+  var coverMatch = html.match(/"cover":"([^"]+)"/);
+  var descMatch = html.match(/"desc":"([^"]+)"/);
+
+  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
+  var authorName = nickMatch ? nickMatch[1] : '';
+  var authorId = uidMatch ? uidMatch[1] : '';
+  var authorAvatar = avatarMatch ? avatarMatch[1].replace(/\\u002F/g, '/') : '';
+  var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
+  var title = descMatch ? descMatch[1] : '';
+
+  if (!videoUrl) return fail('未提取到TikTok视频地址');
+
+  return ok('tiktok', {
+    type: 'video', title: title || '', desc: title || '',
+    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+    cover: cover || '', url: videoUrl || '', images: [],
+  });
+}
+
+
 // ===== A站 =====
 async function parseAcfun(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
@@ -532,6 +563,7 @@ module.exports = async (req, res) => {
       case 'bilibili': result = await parseBilibili(targetUrl); break;
       case 'kuaishou': result = await parseKuaishou(targetUrl); break;
       case 'xiaohongshu': result = await parseXiaohongshu(targetUrl); break;
+      case 'tiktok': result = await parseTiktok(targetUrl); break;
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
