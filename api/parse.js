@@ -380,87 +380,51 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  var videoUrl = "", cover = "", title = "", authorName = "", authorId = "", authorAvatar = "";
-
-  // 方法1: 解析 SIGI_STATE JSON（用 authorId 查 UserModule 取原作者信息）
-  var sigiMatch = html.match(/<script[^>]*id="SIGI_STATE"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
-if (sigiMatch) {
-    try {
-      var sigi = JSON.parse(sigiMatch[1]);
-      var itemModule = sigi.ItemModule;
-      var userModule = sigi.UserModule;
-      if (itemModule) {
-        for (var vid in itemModule) {
-          var item = itemModule[vid];
-          var v = item.video || {};
-          if (typeof v.playAddr === 'string') videoUrl = v.playAddr;
-          else if (v.playAddr) { var paArr = Object.values(v.playAddr); if (paArr.length) videoUrl = paArr[0]; }
-          if (!videoUrl && item.playAddr) {
-            if (typeof item.playAddr === 'string') videoUrl = item.playAddr;
-            else { var paArr2 = Object.values(item.playAddr); if (paArr2.length) videoUrl = paArr2[0]; }
-          }
-          if (typeof v.cover === 'string') cover = v.cover;
-          else if (v.cover) { var cvArr = Object.values(v.cover); if (cvArr.length) cover = cvArr[0]; }
-          if (!cover && v.originCover) {
-            if (typeof v.originCover === 'string') cover = v.originCover;
-            else { var ocArr = Object.values(v.originCover); if (ocArr.length) cover = ocArr[0]; }
-          }
-          title = item.desc || item.title || '';
-          // 用 authorId 从 UserModule 查原作者
-          var rawAuthorId = item.authorId || '';
-          if (rawAuthorId && userModule && userModule[rawAuthorId]) {
-            var u = userModule[rawAuthorId];
-            authorId = u.uniqueId || u.id || '';
-            authorName = u.nickname || u.nickName || '';
-            authorAvatar = u.avatarLarger || u.avatar || u.avatarMedium || u.avatarThumb || '';
-          }
-          if (!authorId) {
-            var auth = item.author || {};
-            authorId = auth.uniqueId || auth.id || '';
-            authorName = auth.nickname || auth.nickName || '';
-            authorAvatar = auth.avatarLarger || auth.avatar || auth.avatarMedium || auth.avatarThumb || '';
-          }
-          if (videoUrl) break;
-        }
-      }
-    } catch(e) {}
+  // 优先从 author 对象块提取（这是视频原作者，不是分享者）
+  var authObj = html.match(/"author":\s*\{[^}]*"uniqueId"[^}]*\}/);
+  var authorName = '', authorId = '', authorAvatar = '';
+  if (authObj) {
+    var aNick = authObj[0].match(/"nickname":"([^"]+)"/);
+    if (aNick) authorName = aNick[1];
+    var aUid = authObj[0].match(/"uniqueId":"([^"]+)"/);
+    if (aUid) authorId = aUid[1];
+    var aAv = authObj[0].match(/"avatarLarger":"([^"]+)"/);
+    if (aAv) authorAvatar = aAv[1].replace(/\\u002F/g, '/');
   }
-  if (!videoUrl) {
-    try {
-      var initMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]+?});\s*<\/script>/);
-      if (initMatch) {
-        var initData = JSON.parse(initMatch[1]);
-        (function deepFind(obj, depth) {
-          if (videoUrl || !obj || typeof obj !== 'object' || depth > 10) return;
-          if (obj.playAddr && typeof obj.playAddr === 'string') { videoUrl = obj.playAddr; return; }
-          if (obj.video && obj.video.playAddr) { videoUrl = typeof obj.video.playAddr === 'string' ? obj.video.playAddr : ''; return; }
-          if (obj.author && obj.author.uniqueId) { authorId = obj.author.uniqueId; authorName = obj.author.nickname || ''; authorAvatar = obj.author.avatarLarger || obj.author.avatar || ''; }
-          for (var k in obj) { if (videoUrl) return; deepFind(obj[k], depth + 1); }
-        })(initData, 0);
-      }
-    } catch(e) {}
-  }
-  if (!videoUrl) {
-    var paMatch = html.match(/"playAddr":"([^"]+)"/);
-    if (paMatch) videoUrl = paMatch[1].replace(/\\u002F/g, '/');
-  }
-  if (!cover) {
-    var covMatch = html.match(/"cover":"([^"]+)"/);
-    if (covMatch) cover = covMatch[1].replace(/\\u002F/g, '/');
-  }
-  if (!title) {
-    var descMatch = html.match(/"desc":"([^"]+)"/);
-    if (descMatch) title = descMatch[1];
+  // 兜底：取页面中最后一个值（分享者信息，但总比没有好）
+  if (!authorId) {
+    var allNick = html.match(/"nickname":"([^"]+)"/g);
+    var allUid = html.match(/"uniqueId":"([^"]+)"/g);
+    var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
+    authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
+    authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
+    authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
   }
 
-  if (!videoUrl) return fail("未提取到TikTok视频地址");
+  var paMatch = html.match(/"playAddr":"([^"]+)"/);
+  var coverMatch = html.match(/"cover":"([^"]+)"/);
+  var descMatch = html.match(/"desc":"([^"]+)"/);
 
-  return ok("tiktok", {
-    type: "video", title: title || "", desc: title || "",
-    author: { name: authorName || "", id: authorId || "", avatar: authorAvatar || "" },
-    cover: cover || "", url: videoUrl || "", images: [],
+  // 取最后一个值（原作者）
+  var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
+  var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
+  var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
+
+  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
+  var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
+  var title = descMatch ? descMatch[1] : '';
+
+  if (!videoUrl) return fail('未提取到TikTok视频地址');
+
+  return ok('tiktok', {
+    type: 'video', title: title || '', desc: title || '',
+    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+    cover: cover || '', url: videoUrl || '', images: [],
   });
 }
+
+
+
 // ===== 西瓜视频 =====
 async function parseXigua(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
@@ -468,40 +432,11 @@ async function parseXigua(originalUrl) {
 
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
 
-  // og:title / og:image（西瓜视频用 name=）
+  // og:title / og:image（注意西瓜视频用 name= 而不是 property=）
   var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
   if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
   var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
   if (iMatch) cover = iMatch[1];
-
-  // 尝试从 window._SSR_HYDRATED_DATA 等 JSON 中提取视频地址
-  try {
-    var jsonPatterns = [
-      /window\._SSR_HYDRATED_DATA\s*=\s*({[\s\S]+?});?\s*<\/script>/,
-      /window\.__INITIAL_STATE__\s*=\s*({[\s\S]+?});?\s*<\/script>/,
-      /<script[^>]*id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
-    ];
-    for (var pi = 0; pi < jsonPatterns.length; pi++) {
-      var pm = html.match(jsonPatterns[pi]);
-      if (!pm) continue;
-      var pd = JSON.parse(pm[1]);
-      (function deepFind(obj, depth) {
-        if (videoUrl || !obj || typeof obj !== 'object' || depth > 12) return;
-        if (typeof obj.url === 'string' && (obj.url.indexOf('.mp4') > 0 || obj.url.indexOf('video') > 0 || obj.url.indexOf('ixigua') > 0)) { videoUrl = obj.url; return; }
-        if (typeof obj.src === 'string' && (obj.src.indexOf('.mp4') > 0 || obj.src.indexOf('video') > 0)) { videoUrl = obj.src; return; }
-        // 直接匹配视频地址字段
-        if (obj.video_id && obj.video_resource && obj.video_resource.url) { videoUrl = obj.video_resource.url; return; }
-        for (var k in obj) { if (videoUrl) return; deepFind(obj[k], depth + 1); }
-      })(pd, 0);
-      if (videoUrl) break;
-    }
-  } catch(e) { /* JSON 解析失败，忽略 */ }
-
-  // 正则兜底：直接匹配 video_url 或 .mp4
-  if (!videoUrl) {
-    var vu = html.match(/"video_url"\s*:\s*"([^"]+)"/) || html.match(/"url"\s*:\s*"([^"]+\.mp4[^"]*)"/);
-    if (vu) videoUrl = vu[1].replace(/\\u002F/g, '/');
-  }
 
   // media_user 作者信息
   var muMatch = html.match(/"media_user":\{[^}]+\}/);
@@ -515,6 +450,7 @@ async function parseXigua(originalUrl) {
     if (idM) authorId = idM[1];
   }
 
+  // 检查是否有视频地址（加密的，大概率拿不到）
   if (!title && !cover) return fail('未提取到西瓜视频信息');
 
   return ok('ixigua', {
