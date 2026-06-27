@@ -405,10 +405,7 @@ async function parseTiktok(originalUrl) {
   var coverMatch = html.match(/"cover":"([^"]+)"/);
   var descMatch = html.match(/"desc":"([^"]+)"/);
 
-  // 取最后一个值（原作者）
-  var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
-  var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
-  var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
+
 
   var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
   var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
