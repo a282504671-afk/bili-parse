@@ -379,17 +379,21 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  var nickMatch = html.match(/"nickname":"([^"]+)"/);
-  var avatarMatch = html.match(/"avatarLarger":"([^"]+)"/);
-  var uidMatch = html.match(/"uniqueId":"([^"]+)"/);
+  // TikTok 页面里第一个用户是分享者/当前登录用户，最后一个才是视频原作者
+  var allNick = html.match(/"nickname":"([^"]+)"/g);
+  var allUid = html.match(/"uniqueId":"([^"]+)"/g);
+  var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
+
   var paMatch = html.match(/"playAddr":"([^"]+)"/);
   var coverMatch = html.match(/"cover":"([^"]+)"/);
   var descMatch = html.match(/"desc":"([^"]+)"/);
 
+  // 取最后一个值（原作者）
+  var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
+  var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
+  var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
+
   var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
-  var authorName = nickMatch ? nickMatch[1] : '';
-  var authorId = uidMatch ? uidMatch[1] : '';
-  var authorAvatar = avatarMatch ? avatarMatch[1].replace(/\\u002F/g, '/') : '';
   var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
   var title = descMatch ? descMatch[1] : '';
 
