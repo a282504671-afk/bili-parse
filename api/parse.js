@@ -16,7 +16,7 @@ function detectPlatform(url) {
   if (/ixigua\.com/.test(url)) return 'ixigua';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
   if (/xiaohongshu\.com|xhslink\.com|xhs\.cn/.test(url)) return 'xiaohongshu';
-  if (/weibo\.com/.test(url) || /t\.cn/.test(url)) return 'weibo';
+  if (/weibo\.com/.test(url) || /^https?:\/\/t\.cn\//.test(url)) return 'weibo';
   if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url)) return 'weixin';
   return 'unknown';
 }
@@ -546,6 +546,11 @@ async function parseAcfun(originalUrl) {
 
 // ===== 微博 =====
 async function parseWeibo(originalUrl) {
+  // t.cn 短链微博平台外已封锁跳转，直接告知用户
+  if (/^https?:\/\/t\.cn\//.test(originalUrl)) {
+    return fail('微博 t.cn 短链无法在平台外解析。请在微博App内打开后，复制地址栏完整链接（如 m.weibo.cn/detail/xxxxx）再重试');
+  }
+
   // 从各种链接格式里提取 mid
   var mid = null;
 
@@ -553,22 +558,26 @@ async function parseWeibo(originalUrl) {
   var m1 = originalUrl.match(/\/(?:detail|status)\/(\d{10,})/);
   if (m1) mid = m1[1];
 
-  // 格式2: weibo.com/数字/mid
+  // 格式2: weibo.com/uid/mid
   if (!mid) {
-    var m2 = originalUrl.match(/weibo\.com\/\d+\/(\w+)$/);
+    var m2 = originalUrl.match(/weibo\.com\/\d+\/(\w+)/);
     if (m2) mid = m2[1];
   }
 
-  // 格式3: 从 t.cn 或HTML中提取
+  // 格式3: ?mid= 参数
+  if (!mid) {
+    var m3p = originalUrl.match(/[?&]mid=(\d{10,})/);
+    if (m3p) mid = m3p[1];
+  }
+
+  // 格式4: 跳转后从URL或HTML捞mid
   if (!mid) {
     try {
-      // 先尝试跳转
       var realUrl = await resolveRedirect(originalUrl);
       var m3 = realUrl.match(/\/(?:detail|status)\/(\d{10,})/);
       if (m3) mid = m3[1];
-      // 从HTML中捞mid
       if (!mid) {
-        var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/', 'User-Agent': UA });
+        var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/' });
         var m4 = html.match(/["']mid["']\s*:\s*["']?(\d{10,})["']?/);
         if (m4) mid = m4[1];
         var m5 = html.match(/\/(?:detail|status)\/(\d{10,})/);
@@ -577,7 +586,7 @@ async function parseWeibo(originalUrl) {
     } catch(e) {}
   }
 
-  if (!mid) return fail('无法从微博链接中提取视频ID，t.cn短链可能已被拦截');
+  if (!mid) return fail('无法从微博链接中提取视频ID，请使用完整链接（如 m.weibo.cn/detail/xxxxx）');
 
   // 调移动端 statuses 接口
   try {
@@ -625,7 +634,7 @@ async function parseWeibo(originalUrl) {
 
 // ===== 微信视频号（via BUGPK 中转） =====
 async function parseWeixin(originalUrl) {
-  var apiUrl = 'https://api.bugpk.com/api/?url=' + encodeURIComponent(originalUrl);
+  var apiUrl = 'https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl);
   try {
     var res = await fetch(apiUrl, {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
