@@ -13,6 +13,7 @@ function detectPlatform(url) {
   if (/tiktok\.com|vt\.tiktok\.com/.test(url)) return 'tiktok';
   if (/bilibili\.com|b23\.tv/.test(url)) return 'bilibili';
   if (/acfun\.cn/.test(url)) return 'acfun';
+  if (/ixigua\.com/.test(url)) return 'ixigua';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
   if (/xiaohongshu\.com|xhslink\.com|xhs\.cn/.test(url)) return 'xiaohongshu';
   if (/weibo\.com/.test(url) || /t\.cn/.test(url)) return 'weibo';
@@ -379,27 +380,142 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // TikTok 页面里第一个用户是分享者/当前登录用户，最后一个才是视频原作者
-  var allNick = html.match(/"nickname":"([^"]+)"/g);
-  var allUid = html.match(/"uniqueId":"([^"]+)"/g);
-  var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
+  var videoUrl = '', cover = '', title = '', authorName = '', authorId = '', authorAvatar = '';
 
-  var paMatch = html.match(/"playAddr":"([^"]+)"/);
-  var coverMatch = html.match(/"cover":"([^"]+)"/);
-  var descMatch = html.match(/"desc":"([^"]+)"/);
+  // 方法1: 解析 SIGI_STATE JSON（最可靠，能区分原作者和分享者）
+  var sigiMatch = html.match(/<script[^>]*id="SIGI_STATE"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
+  if (sigiMatch) {
+    try {
+      var sigi = JSON.parse(sigiMatch[1]);
+      var itemModule = sigi.ItemModule;
+      if (itemModule) {
+        for (var vid in itemModule) {
+          var item = itemModule[vid];
+          var auth = item.author || {};
+          var v = item.video || {};
+          videoUrl = (typeof v.playAddr === 'string' ? v.playAddr : (v.playAddr && Object.values(v.playAddr)[0]) || '');
+          if (!videoUrl && item.playAddr) videoUrl = typeof item.playAddr === 'string' ? item.playAddr : (Object.values(item.playAddr)[0] || '');
+          cover = (typeof v.cover === 'string' ? v.cover : (v.cover && Object.values(v.cover)[0]) || '');
+          if (!cover && v.originCover) cover = typeof v.originCover === 'string' ? v.originCover : (Object.values(v.originCover)[0] || '');
+          title = item.desc || item.title || '';
+          // 取原作者信息（SIGI_STATE 的 author 就是原作者，不是分享者）
+          authorId = auth.uniqueId || auth.id || '';
+          authorName = auth.nickname || auth.nickName || '';
+          authorAvatar = auth.avatarLarger || auth.avatar || auth.avatarMedium || auth.avatarThumb || '';
+          if (videoUrl) break;
+        }
+      }
+    } catch(e) {}
+  }
 
-  // 取最后一个值（原作者）
-  var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
-  var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
-  var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
+  // 方法2: 从 window.__INITIAL_STATE__ 提取（兜底）
+  if (!videoUrl && !authorId) {
+    try {
+      var initMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]+?});\s*<\/script>/);
+      if (initMatch) {
+        var initData = JSON.parse(initMatch[1]);
+        // 递归查找视频地址和作者信息
+        (function deepFind(obj, depth) {
+          if (videoUrl || !obj || typeof obj !== 'object' || depth > 10) return;
+          if (obj.playAddr && typeof obj.playAddr === 'string') { videoUrl = obj.playAddr; return; }
+          if (obj.video && obj.video.playAddr) { videoUrl = typeof obj.video.playAddr === 'string' ? obj.video.playAddr : ''; return; }
+          if (obj.author && obj.author.uniqueId) { authorId = obj.author.uniqueId; authorName = obj.author.nickname || ''; authorAvatar = obj.author.avatarLarger || obj.author.avatar || ''; }
+          for (var k in obj) { if (videoUrl) return; deepFind(obj[k], depth + 1); }
+        })(initData, 0);
+      }
+    } catch(e) {}
+  }
 
-  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
-  var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
-  var title = descMatch ? descMatch[1] : '';
+  // 方法3: 正则匹配（最终兜底）
+  if (!videoUrl) {
+    var paMatch = html.match(/"playAddr":"([^"]+)"/);
+    if (paMatch) videoUrl = paMatch[1].replace(/\\u002F/g, '/');
+  }
+  if (!cover) {
+    var covMatch = html.match(/"cover":"([^"]+)"/);
+    if (covMatch) cover = covMatch[1].replace(/\\u002F/g, '/');
+  }
+  if (!title) {
+    var descMatch = html.match(/"desc":"([^"]+)"/);
+    if (descMatch) title = descMatch[1];
+  }
+  if (!authorId) {
+    var uidMatch = html.match(/"uniqueId":"([^"]+)"/g);
+    if (uidMatch && uidMatch.length > 0) {
+      // 取第一个 uniqueId（不是分享者的）
+      var firstUid = uidMatch[0].match(/"uniqueId":"([^"]+)"/);
+      if (firstUid) authorId = firstUid[1];
+    }
+  }
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
   return ok('tiktok', {
+    type: 'video', title: title || '', desc: title || '',
+    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+    cover: cover || '', url: videoUrl || '', images: [],
+  });
+}
+
+
+
+// ===== 西瓜视频 =====
+async function parseXigua(originalUrl) {
+  var realUrl = await resolveRedirect(originalUrl);
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.ixigua.com/' });
+
+  var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
+
+  // og:title / og:image（西瓜视频用 name=）
+  var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
+  if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
+  var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
+  if (iMatch) cover = iMatch[1];
+
+  // 尝试从 window._SSR_HYDRATED_DATA 等 JSON 中提取视频地址
+  try {
+    var jsonPatterns = [
+      /window\._SSR_HYDRATED_DATA\s*=\s*({[\s\S]+?});?\s*<\/script>/,
+      /window\.__INITIAL_STATE__\s*=\s*({[\s\S]+?});?\s*<\/script>/,
+      /<script[^>]*id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
+    ];
+    for (var pi = 0; pi < jsonPatterns.length; pi++) {
+      var pm = html.match(jsonPatterns[pi]);
+      if (!pm) continue;
+      var pd = JSON.parse(pm[1]);
+      (function deepFind(obj, depth) {
+        if (videoUrl || !obj || typeof obj !== 'object' || depth > 12) return;
+        if (typeof obj.url === 'string' && (obj.url.indexOf('.mp4') > 0 || obj.url.indexOf('video') > 0 || obj.url.indexOf('ixigua') > 0)) { videoUrl = obj.url; return; }
+        if (typeof obj.src === 'string' && (obj.src.indexOf('.mp4') > 0 || obj.src.indexOf('video') > 0)) { videoUrl = obj.src; return; }
+        // 直接匹配视频地址字段
+        if (obj.video_id && obj.video_resource && obj.video_resource.url) { videoUrl = obj.video_resource.url; return; }
+        for (var k in obj) { if (videoUrl) return; deepFind(obj[k], depth + 1); }
+      })(pd, 0);
+      if (videoUrl) break;
+    }
+  } catch(e) { /* JSON 解析失败，忽略 */ }
+
+  // 正则兜底：直接匹配 video_url 或 .mp4
+  if (!videoUrl) {
+    var vu = html.match(/"video_url"\s*:\s*"([^"]+)"/) || html.match(/"url"\s*:\s*"([^"]+\.mp4[^"]*)"/);
+    if (vu) videoUrl = vu[1].replace(/\\u002F/g, '/');
+  }
+
+  // media_user 作者信息
+  var muMatch = html.match(/"media_user":\{[^}]+\}/);
+  if (muMatch) {
+    var mu = muMatch[0];
+    var sn = mu.match(/"screen_name":"([^"]+)"/);
+    if (sn) authorName = sn[1];
+    var av = mu.match(/"avatar_url":"([^"]+)"/);
+    if (av) authorAvatar = av[1].replace(/\\u002F/g, '/');
+    var idM = mu.match(/"id":"(\d+)"/);
+    if (idM) authorId = idM[1];
+  }
+
+  if (!title && !cover) return fail('未提取到西瓜视频信息');
+
+  return ok('ixigua', {
     type: 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
     cover: cover || '', url: videoUrl || '', images: [],
@@ -488,66 +604,108 @@ async function parseAcfun(originalUrl) {
 
 // ===== 微博 =====
 async function parseWeibo(originalUrl) {
-  var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/' });
-  var videoUrl = '';
-  var v1 = html.match(/"stream_url_hd"\s*:\s*"([^"]+)"/) || html.match(/"stream_url"\s*:\s*"([^"]+)"/);
-  if (v1) videoUrl = v1[1].replace(/\\\//g, '/');
-  var titleMatch = html.match(/<meta\s+property="og:title"[^>]*content="([^"]+)"/);
-  var coverMatch = html.match(/<meta\s+property="og:image"[^>]*content="([^"]+)"/);
-  var authorMatch = html.match(/"screen_name"\s*:\s*"([^"]+)"/);
-  if (!videoUrl) return fail('未提取到微博视频地址');
-  return ok('weibo', {
-    type: 'video', title: titleMatch ? titleMatch[1] : '', desc: titleMatch ? titleMatch[1] : '',
-    author: { name: authorMatch ? authorMatch[1] : '', id: '', avatar: '' },
-    cover: coverMatch ? coverMatch[1] : '', url: videoUrl, images: [],
-  });
-}
+  // 从各种链接格式里提取 mid
+  var mid = null;
 
-// ===== 微信视频号 =====
-async function parseWeixin(originalUrl) {
-  var realUrl = await resolveRedirect(originalUrl);
-  var html = await fetchHtml(realUrl, { Referer: 'https://channels.weixin.qq.com/', 'User-Agent': UA_WECHAT });
-  var videoUrl = '', title = '', cover = '', authorName = '';
+  // 格式1: m.weibo.cn/detail/xxx 或 /status/xxx
+  var m1 = originalUrl.match(/\/(?:detail|status)\/(\d{10,})/);
+  if (m1) mid = m1[1];
 
-  var jsonCandidates = [
-    /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]+?\})\s*;?\s*<\/script>/,
-    /window\.__wxBizJson__\s*=\s*(\{[\s\S]+?\})\s*;?\s*<\/script>/,
-  ];
-  for (var i = 0; i < jsonCandidates.length; i++) {
-    var m = html.match(jsonCandidates[i]);
-    if (!m) continue;
+  // 格式2: weibo.com/数字/mid
+  if (!mid) {
+    var m2 = originalUrl.match(/weibo\.com\/\d+\/(\w+)$/);
+    if (m2) mid = m2[1];
+  }
+
+  // 格式3: 从 t.cn 或HTML中提取
+  if (!mid) {
     try {
-      var parsed = JSON.parse(m[1].replace(/undefined/g, 'null'));
-      // 递归搜索 finder.video.qq.com 地址
-      (function deepFind(obj, depth) {
-        if (videoUrl || !obj || typeof obj !== 'object' || depth > 12) return;
-        if (typeof obj.url === 'string' && /finder\.video\.qq\.com|\.mp4/.test(obj.url)) { videoUrl = obj.url; return; }
-        for (var k in obj) { if (videoUrl) return; var v = obj[k]; if (v && typeof v === 'object') deepFind(v, depth + 1); }
-      })(parsed, 0);
+      // 先尝试跳转
+      var realUrl = await resolveRedirect(originalUrl);
+      var m3 = realUrl.match(/\/(?:detail|status)\/(\d{10,})/);
+      if (m3) mid = m3[1];
+      // 从HTML中捞mid
+      if (!mid) {
+        var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/', 'User-Agent': UA });
+        var m4 = html.match(/["']mid["']\s*:\s*["']?(\d{10,})["']?/);
+        if (m4) mid = m4[1];
+        var m5 = html.match(/\/(?:detail|status)\/(\d{10,})/);
+        if (!mid && m5) mid = m5[1];
+      }
     } catch(e) {}
   }
 
-  if (!videoUrl) {
-    var rawV = html.match(/https?:\\?\/\\?\/finder\.video\.qq\.com\/[^"'\\\s]+/);
-    if (rawV) videoUrl = rawV[0].replace(/\\\//g, '/');
-  }
+  if (!mid) return fail('无法从微博链接中提取视频ID，t.cn短链可能已被拦截');
 
-  var ogT = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/);
-  if (ogT) title = ogT[1];
-  var ogI = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/);
-  if (ogI) cover = ogI[1];
-  var nameMatch = html.match(/"nickname"\s*:\s*"([^"]+)"/);
-  if (nameMatch) authorName = nameMatch[1];
-
-  if (title || cover) {
-    return ok('weixin', {
-      type: 'video', title: title || '', desc: title || '',
-      author: { name: authorName || '', id: '', avatar: '' },
-      cover: cover || '', url: videoUrl || '', images: [],
+  // 调移动端 statuses 接口
+  try {
+    var apiRes = await fetch('https://m.weibo.cn/statuses/show?id=' + mid, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Referer': 'https://m.weibo.cn/',
+        'Accept': 'application/json, text/plain, */*',
+        'MWeibo-Pwa': '1',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
     });
-  }
-  return fail('微信视频号页面无 SSR 数据，无法解析');
+
+    if (apiRes.ok) {
+      var json = await apiRes.json();
+      var mblog = json.data || json;
+      if (mblog) {
+        var title = mblog.text ? mblog.text.replace(/<[^>]+>/g, '').trim() : '';
+        var authorName = (mblog.user && mblog.user.screen_name) || '';
+        var authorAvatar = (mblog.user && mblog.user.profile_image_url) || '';
+        var authorId = (mblog.user && String(mblog.user.id)) || '';
+        var videoUrl = '', cover = '';
+
+        var pageInfo = mblog.page_info;
+        if (pageInfo && pageInfo.media_info) {
+          videoUrl = pageInfo.media_info.stream_url_hd || pageInfo.media_info.stream_url || pageInfo.media_info.mp4_720p_mp4 || pageInfo.media_info.mp4_hd_url || pageInfo.media_info.mp4_sd_url || '';
+          cover = (pageInfo.page_pic && pageInfo.page_pic.url) || pageInfo.page_pic || '';
+          if (!title && pageInfo.page_title) title = pageInfo.page_title;
+        }
+
+        if (videoUrl || title) {
+          return ok('weibo', {
+            type: 'video', title: title || '', desc: title || '',
+            author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+            cover: cover || '', url: videoUrl || '', images: [],
+          });
+        }
+      }
+    }
+  } catch(e) {}
+
+  return fail('未能提取到微博视频数据');
 }
+
+
+// ===== 微信视频号（via BUGPK 中转） =====
+async function parseWeixin(originalUrl) {
+  var apiUrl = 'https://api.bugpk.com/api/?url=' + encodeURIComponent(originalUrl);
+  try {
+    var res = await fetch(apiUrl, {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+    });
+    if (res.ok) {
+      var json = await res.json();
+      if (json.code === 200 && json.data) {
+        var d = json.data;
+        return ok('weixin', {
+          type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
+          author: { name: (d.author && d.author.name) || '', id: (d.author && d.author.id) || '', avatar: (d.author && d.author.avatar) || '' },
+          cover: d.cover || '', url: d.url || '', images: [],
+        });
+      }
+      return fail('BUGPK 解析失败: ' + (json.msg || '未知错误'));
+    }
+    return fail('BUGPK 接口返回 HTTP ' + res.status);
+  } catch(e) {
+    return fail('请求 BUGPK 接口失败: ' + e.message);
+  }
+}
+
 
 // ===== 主入口 =====
 module.exports = async (req, res) => {
@@ -568,6 +726,7 @@ module.exports = async (req, res) => {
       case 'kuaishou': result = await parseKuaishou(targetUrl); break;
       case 'xiaohongshu': result = await parseXiaohongshu(targetUrl); break;
       case 'tiktok': result = await parseTiktok(targetUrl); break;
+      case 'ixigua': result = await parseXigua(targetUrl); break;
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
