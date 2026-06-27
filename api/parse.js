@@ -11,6 +11,7 @@ function fail(msg, code = 500) {
 function detectPlatform(url) {
   if (/douyin\.com|iesdouyin\.com/.test(url)) return 'douyin';
   if (/bilibili\.com|b23\.tv/.test(url)) return 'bilibili';
+  if (/acfun\.cn/.test(url)) return 'acfun';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
   if (/xiaohongshu\.com|xhslink\.com|xhs\.cn/.test(url)) return 'xiaohongshu';
   if (/weibo\.com/.test(url)) return 'weibo';
@@ -370,6 +371,86 @@ async function parseXiaohongshu(originalUrl) {
   });
 }
 
+
+// ===== A站 =====
+async function parseAcfun(originalUrl) {
+  var realUrl = await resolveRedirect(originalUrl);
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.acfun.cn/' });
+
+  var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
+
+  // 提取 ac id
+  var acMatch = realUrl.match(/[?&]ac=(\d+)/);
+  if (!acMatch) return fail('未识别到AC号');
+
+  // 解析 window.videoInfo
+  var viStart = html.indexOf('window.videoInfo =');
+  if (viStart >= 0) {
+    var vs = viStart + 'window.videoInfo ='.length;
+    var depth = 0, inStr = false, escape = false, ve = vs;
+    for (; ve < html.length; ve++) {
+      var ch = html[ve];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inStr) { escape = true; continue; }
+      if (ch === '"' && !escape) { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') depth--;
+      if (depth === 0 && ch === '}') { ve++; break; }
+    }
+    try {
+      var vi = JSON.parse(html.substring(vs, ve));
+      title = vi.title || '';
+      cover = vi.cover || vi.videoCover || '';
+    } catch(e) {}
+  }
+
+  // 解析 var playInfo（视频流地址）
+  var piStart = html.indexOf('var playInfo =');
+  if (piStart >= 0) {
+    var ps = piStart + 'var playInfo ='.length;
+    var dep2 = 0, ins2 = false, esc2 = false, pe = ps;
+    for (; pe < html.length; pe++) {
+      var ch2 = html[pe];
+      if (esc2) { esc2 = false; continue; }
+      if (ch2 === '\\' && ins2) { esc2 = true; continue; }
+      if (ch2 === '"' && !esc2) { ins2 = !ins2; continue; }
+      if (ins2) continue;
+      if (ch2 === '{') dep2++;
+      if (ch2 === '}') dep2--;
+      if (dep2 === 0 && ch2 === '}') { pe++; break; }
+    }
+    try {
+      var pi = JSON.parse(html.substring(ps, pe));
+      if (pi.streams && pi.streams.length) {
+        // 取最高画质的播放地址
+        for (var si = 0; si < pi.streams.length; si++) {
+          if (pi.streams[si].playUrls && pi.streams[si].playUrls.length) {
+            videoUrl = pi.streams[si].playUrls[0];
+            break;
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
+  // 从 HTML 中提取作者信息
+  var nameMatch = html.match(/<span\s+class="up-name">([^<]+)<\/span>/);
+  if (nameMatch) authorName = nameMatch[1].trim();
+  var avatarMatch = html.match(/<span class="up-avatar"><img src="([^"]+)"/);
+  if (avatarMatch) authorAvatar = avatarMatch[1];
+  var uidMatch = html.match(/\/upPage\/(\d+)/);
+  if (uidMatch) authorId = uidMatch[1];
+
+  if (!title && !cover) return fail('未提取到A站视频信息');
+
+  return ok('acfun', {
+    type: 'video', title: title || '', desc: title || '',
+    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+    cover: cover || '', url: videoUrl || '', images: [],
+  });
+}
+
 // ===== 微博 =====
 async function parseWeibo(originalUrl) {
   var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/' });
@@ -451,6 +532,7 @@ module.exports = async (req, res) => {
       case 'bilibili': result = await parseBilibili(targetUrl); break;
       case 'kuaishou': result = await parseKuaishou(targetUrl); break;
       case 'xiaohongshu': result = await parseXiaohongshu(targetUrl); break;
+      case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
       default: return res.status(400).json(fail('暂不支持该平台链接', 400));
