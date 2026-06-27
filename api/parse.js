@@ -15,7 +15,7 @@ function detectPlatform(url) {
   if (/acfun\.cn/.test(url)) return 'acfun';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
   if (/xiaohongshu\.com|xhslink\.com|xhs\.cn/.test(url)) return 'xiaohongshu';
-  if (/weibo\.com/.test(url)) return 'weibo';
+  if (/weibo\.com/.test(url) || /t\.cn/.test(url)) return 'weibo';
   if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url)) return 'weixin';
   return 'unknown';
 }
