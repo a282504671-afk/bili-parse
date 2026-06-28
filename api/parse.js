@@ -156,7 +156,7 @@ async function parseBilibili(originalUrl) {
             title: bpData.title || bpData.desc || '',
             desc: bpData.desc || bpData.title || '',
             pic: bpData.cover || '',
-            owner: { name: bpData.author && bpData.author.name || bpData.auther || '', mid: bpData.author && bpData.author.id || '', face: bpData.author && bpData.author.avatar || '' },
+            owner: { name: (bpData.author && bpData.author.name) || bpData.auther || bpData.author_name || bpData.nickname || '', mid: (bpData.author && bpData.author.id) || bpData.author_id || bpData.uid || '', face: (bpData.author && bpData.author.avatar) || bpData.avatar || bpData.author_avatar || bpData.face || '' },
             cid: 0, aid: 0,
           };
           videoUrl = bpData.url || '';
@@ -293,7 +293,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!authorId && note.user) authorId = note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (candidates.length) videoUrl = candidates[0].masterUrl || (candidates[0].backupUrls && candidates[0].backupUrls[0]) || '';
+                  if (candidates.length) videoUrl = candidates[0].masterUrl || candidates[0].no_watermark_url || candidates[0].url || (candidates[0].backupUrls && candidates[0].backupUrls[0]) || '';
                 }
                 if (note.imageList && note.imageList.length) {
                   note.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
@@ -326,7 +326,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!cover) cover = note.cover && (note.cover.url_default || note.cover.url) || '';
                 if (!videoUrl && note.video && note.video.media && note.video.media.stream) {
                   var c = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (c.length) videoUrl = c[0].masterUrl || (c[0].backupUrls && c[0].backupUrls[0]) || '';
+                  if (c.length) videoUrl = c[0].masterUrl || c[0].no_watermark_url || c[0].url || (c[0].backupUrls && c[0].backupUrls[0]) || '';
                 }
                 if (!images.length && note.image_list && note.image_list.length) {
                   note.image_list.forEach(function(img) { images.push(img.url_default || img.url || ''); });
