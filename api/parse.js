@@ -539,7 +539,9 @@ async function parseAcfun(originalUrl) {
 
   // 鎻愬彇 ac id
   var acMatch = realUrl.match(/[?&]ac=(\d+)/);
-  if (!acMatch) return fail('未识别到AC号'window.videoInfo =', 'let videoInfo =', 'const videoInfo =', 'window.__INITIAL_STATE__ ='];
+  if (!acMatch) return fail('未识别到AC号');
+
+  var viKeys = ['window.videoInfo =', 'let videoInfo =', 'const videoInfo =', 'window.__INITIAL_STATE__ ='];
   for (var vi = 0; vi < viKeys.length; vi++) {
     var viStart = html.indexOf(viKeys[vi]);
     if (viStart < 0) continue;
@@ -627,7 +629,9 @@ async function parseAcfun(originalUrl) {
   if (!authorId) { var uid = html.match(/\/upPage\/(\d+)/); if (uid) authorId = uid[1]; }
   if (!authorId) { var uid2 = html.match(/"userId"\s*:\s*"(\d+)"/); if (uid2) authorId = uid2[1]; }
 
-  if (!title && !cover) return fail('未提取到A站视频信息'acfun', {
+  if (!title && !cover) return fail('未提取到A站视频信息');
+
+  return ok('acfun', {
     type: 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
     cover: cover || '', url: videoUrl || '', images: [],
@@ -664,7 +668,7 @@ var realUrl = await resolveRedirect(originalUrl);
     } catch(e) {}
   }
 
-  if (!mid) return fail('无法从微博链接中提取视频ID，t.cn短链可能已被拦截'');
+  if (!mid) return fail('无法从微博链接中提取视频ID，t.cn短链可能已被拦截');
 
   // 鐠嬪啰些閸斻劎顏?statuses 閹恒儱褰?  try {
     var apiRes = await fetch('https://m.weibo.cn/statuses/show?id=' + mid, {
@@ -726,7 +730,7 @@ async function parseWeixin(originalUrl) {
           cover: d.cover || '', url: d.url || '', images: [],
         });
       }
-      return fail('BUGPK 解析失败: ' + (json.msg || '閺堫亞鐓￠柨娆掝嚖'));
+      return fail('BUGPK 解析失败: ' + (json.msg || '未知错误'));
     }
     return fail('BUGPK 接口返回 HTTP ' + res.status);
   } catch(e) {
