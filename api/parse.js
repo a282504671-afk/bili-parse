@@ -177,7 +177,7 @@ async function parseBilibili(originalUrl) {
 
   if (info.cid && info.aid) {
     try {
-      var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=0&fourk=1', {
+      var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1', {
         headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
       });
       var pt = await pr.text();
@@ -185,31 +185,8 @@ async function parseBilibili(originalUrl) {
         var pj = JSON.parse(pt);
         if (pj.code === 0) {
           var d = pj.data;
-          if (d.durl && d.durl.length) {
-            videoUrl = d.durl[0].url;
-          } else if (d.dash && d.dash.video && d.dash.video.length) {
-            videoUrl = d.dash.video[0].baseUrl || d.dash.video[0].base_url || '';
-          }
-          // 如果 MP4 拿不到，再尝试 DASH (fnval=16)
-          if (!videoUrl) {
-            try {
-              var pr2 = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1', {
-                headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
-              });
-              var pt2 = await pr2.text();
-              if (pt2.trim().startsWith('{')) {
-                var pj2 = JSON.parse(pt2);
-                if (pj2.code === 0 && pj2.data) {
-                  var d2 = pj2.data;
-                  if (d2.dash && d2.dash.video && d2.dash.video.length) {
-                    videoUrl = d2.dash.video[0].baseUrl || d2.dash.video[0].base_url || '';
-                  } else if (d2.durl && d2.durl.length) {
-                    videoUrl = d2.durl[0].url;
-                  }
-                }
-              }
-            } catch(e2) {}
-          }
+          if (d.dash && d.dash.video && d.dash.video.length) videoUrl = d.dash.video[0].baseUrl || d.dash.video[0].base_url || '';
+          else if (d.durl && d.durl.length) videoUrl = d.durl[0].url;
         }
       }
     } catch(e) {}
@@ -262,8 +239,6 @@ async function parseKuaishou(originalUrl) {
   if (!authorId) {
     var idMatch = html.match(/"eid"\s*:\s*"([^"]+)"/) || html.match(/"userId"\s*:\s*"([^"]+)"/) || html.match(/"user_id"\s*:\s*"([^"]+)"/);
     if (idMatch) authorId = idMatch[1];
-    if (!authorId) { var id2 = html.match(/"uniqueId"\s*:\s*"([^"]+)"/); if (id2) authorId = id2[1]; }
-    if (!authorId) { var id3 = html.match(/kuaishou\.com\/profile\/(\d+)/); if (id3) authorId = id3[1]; }
   }
 
   if (!videoUrl && !cover) return fail('未提取到快手视频地址');
@@ -294,8 +269,6 @@ async function parseXiaohongshu(originalUrl) {
 
   var userIdMatch = html.match(/"userId"\s*:\s*"([^"]+)"/);
   if (userIdMatch) authorId = userIdMatch[1];
-    if (!authorId) { var uid2 = html.match(/"user_id"\s*:\s*"([^"]+)"/); if (uid2) authorId = uid2[1]; }
-    if (!authorId) { var uid3 = html.match(/\/user\/([a-f0-9]+)/); if (uid3) authorId = uid3[1]; }
 
   // __INITIAL_STATE__ 解析
   var stateStart = html.indexOf('__INITIAL_STATE__=');
