@@ -293,7 +293,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!authorId && note.user) authorId = note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (candidates.length) videoUrl = candidates[0].no_watermark_url || candidates[0].masterUrl || candidates[0].url || (candidates[0].backupUrls && candidates[0].backupUrls[0]) || '';
+                  if (candidates.length) videoUrl = candidates[0].masterUrl || candidates[0].url || (candidates[0].backupUrls && candidates[0].backupUrls[0]) || '';
                 }
                 if (note.imageList && note.imageList.length) {
                   note.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
@@ -326,7 +326,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!cover) cover = note.cover && (note.cover.url_default || note.cover.url) || '';
                 if (!videoUrl && note.video && note.video.media && note.video.media.stream) {
                   var c = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (c.length) videoUrl = c[0].no_watermark_url || c[0].masterUrl || c[0].url || (c[0].backupUrls && c[0].backupUrls[0]) || '';
+                  if (c.length) videoUrl = c[0].masterUrl || c[0].url || (c[0].backupUrls && c[0].backupUrls[0]) || '';
                 }
                 if (!images.length && note.image_list && note.image_list.length) {
                   note.image_list.forEach(function(img) { images.push(img.url_default || img.url || ''); });
@@ -351,6 +351,22 @@ async function parseXiaohongshu(originalUrl) {
       if (buMatch) {
         videoUrl = buMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
         if (videoUrl.indexOf('http://') === 0) videoUrl = 'https://' + videoUrl.substring(7);
+      }
+    }
+  }
+
+    // 从原始HTML中搜索 xhscdn stream 直链
+  if (!videoUrl && !images.length) {
+    var anyStream = html.match(/https?:\\/\\/[^"'\s]*xhscdn\.com\\/stream\\/[^"'\s]+\.mp4[^"'\s]*/i) || html.match(/https?:\/\/[^"'\s]*xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
+    if (anyStream) { videoUrl = anyStream[0].replace(/&amp;/g, '&').replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+    if (!videoUrl) {
+      var allUrls = html.match(/https?:\\/\\/[^"'']*xhscdn\.com\\/stream\\/[^"'\s]+/g);
+      if (allUrls && allUrls.length) {
+        for (var si = 0; si < allUrls.length; si++) {
+          var su = allUrls[si].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+          if (su.indexOf('http://') === 0) su = 'https://' + su.substring(7);
+          if (su.match(/\.mp4/i)) { videoUrl = su; break; }
+        }
       }
     }
   }
