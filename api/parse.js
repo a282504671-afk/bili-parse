@@ -20,6 +20,7 @@ function detectPlatform(url) {
   if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url)) return 'weixin';
   return 'unknown';
 }
+
 async function resolveRedirect(url) {
   try {
     const res = await fetch(url, { method: 'GET', redirect: 'follow', headers: { 'User-Agent': UA } });
@@ -35,7 +36,7 @@ async function fetchHtml(url, extraHeaders = {}) {
   return await res.text();
 }
 
-// ===== 閹舵牠鐓?=====
+// ===== 抖音 =====
 function extractDouyinItemId(url) {
   var m = url.match(/\/(?:share\/)?video\/(\d{6,})/);
   if (m) return m[1];
@@ -83,10 +84,10 @@ async function parseDouyin(originalUrl) {
   var playUrl = (video.play_addr && video.play_addr.url_list && video.play_addr.url_list[0]) || '';
   if (playUrl) playUrl = playUrl.replace('playwm', 'play').replace(/\\u002F/g, '/');
 
-  // og:title 閸忔粌绨?
+  // og:title 兜底
   if (!item.desc && !(item.share_info && item.share_info.share_title)) {
     var ogTitle = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
-    if (ogTitle && ogTitle[1] && ogTitle[1].indexOf('閹舵牠鐓?) < 0 && ogTitle[1].indexOf('douyin') < 0) {
+    if (ogTitle && ogTitle[1] && ogTitle[1].indexOf('抖音') < 0 && ogTitle[1].indexOf('douyin') < 0) {
       item.desc = ogTitle[1];
     }
   }
@@ -108,7 +109,7 @@ async function parseDouyin(originalUrl) {
   });
 }
 
-// ===== B缁?=====
+// ===== B站 =====
 async function parseBilibili(originalUrl) {
   var realUrl = originalUrl;
   if (realUrl.includes('b23.tv')) realUrl = await resolveRedirect(realUrl);
@@ -123,7 +124,7 @@ async function parseBilibili(originalUrl) {
   var info = null;
   var videoUrl = '';
 
-  // 閺傜懓绱?: 妞ょ敻娼?HTML
+  // 方式1: 页面 HTML
   try {
     var html = await fetchHtml(realUrl, { Referer: 'https://www.bilibili.com/' });
     var stateStr = null;
@@ -149,7 +150,7 @@ async function parseBilibili(originalUrl) {
     }
   } catch(e) {}
 
-  // 閺傜懓绱?: API
+  // 方式2: API
   if (!info || !info.aid || !info.cid) {
     try {
       var vr = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
@@ -174,8 +175,8 @@ async function parseBilibili(originalUrl) {
 
   if (!info || (!info.title && !info.pic)) return fail('获取B站视频信息失败');
 
-  if (info.cid && info.aid) {
-    // 浼樺厛: 闈?DASH 格式 (fnval=0, 返回 MP4/FLV 鐩撮摼)
+    if (info.cid && info.aid) {
+    // 优先: 非 DASH 格式 (fnval=0, 返回 MP4/FLV 直链)
     var qualities = [80, 64, 48, 32, 16];
     for (var qi = 0; qi < qualities.length; qi++) {
       try {
@@ -192,7 +193,7 @@ async function parseBilibili(originalUrl) {
         }
       } catch(e) { /* skip */ }
     }
-    // 鍏滃簳: DASH 格式 (fnval=16, 返回 .m4s 鍒嗘)
+    // 兜底: DASH 格式 (fnval=16, 返回 .m4s)
     if (!videoUrl) {
       try {
         var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1&platform=web', {
@@ -210,27 +211,26 @@ async function parseBilibili(originalUrl) {
       } catch(e) {}
     }
   }
-return ok('bilibili', {
+
+  return ok('bilibili', {
     type: 'video', title: info.title || '', desc: info.desc || '',
     author: { name: (info.owner && info.owner.name) || '', id: (info.owner && info.owner.mid && String(info.owner.mid)) || '', avatar: (info.owner && info.owner.face) || '' },
     cover: info.pic || '', url: videoUrl || '', images: [],
   });
 }
 
-// ===== 韫囶偅澧?=====
+// ===== 快手 =====
 async function parseKuaishou(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
   var videoUrl = '', title = '', cover = '', authorName = '', authorId = '', authorAvatar = '';
 
-  // 视频地址: 澶氱姝ｅ垯鍖归厤
   var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url=\"([^\"]+)\"/, /data-url=\"([^"']+)\"/];
   for (var i = 0; i < patterns.length; i++) {
     var m = html.match(patterns[i]);
     if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
   }
 
-  // OG 鏍囩
   var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
   if (ogT) title = ogT[1];
   var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
@@ -238,47 +238,26 @@ async function parseKuaishou(originalUrl) {
   var ogV = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]+)"/);
   if (ogV && !videoUrl) videoUrl = ogV[1];
 
-  // 灏侀潰: 澶氱 fallback
   if (!cover) { var c2 = html.match(/"coverUrl"\s*:\s*"([^"]+)"/); if (c2) cover = c2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var c3 = html.match(/"poster"\s*:\s*"([^"]+)"/); if (c3) cover = c3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var c4 = html.match(/"cover"\s*:\s*"([^"]+)"/); if (c4) cover = c4[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var c5 = html.match(/"thumbnail"\s*:\s*"([^"]+)"/); if (c5) cover = c5[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var upic = html.match(/https?:\/\/[^"']*yximgs\.com\/upic\/[^"']+\.jpg[^"']*/i); if (upic) cover = upic[0].replace(/&amp;/g, '&'); }
 
-  // 浣滆€呮樀绉?  if (!authorName) {
+  if (!authorName) {
     var aMatch = html.match(/"name"\s*:\s*"([^"]+)"\s*,\s*"avatar"/);
     if (!aMatch) aMatch = html.match(/"user_name"\s*:\s*"([^"]+)"/);
     if (!aMatch) aMatch = html.match(/"nickname"\s*:\s*"([^"]+)"/);
-    if (!aMatch) aMatch = html.match(/"caption"\s*:\s*"([^"]+)"/);
     if (aMatch) authorName = aMatch[1];
   }
-
-  // 浣滆€呭ご鍍?  if (!authorAvatar) {
+  if (!authorAvatar) {
     var avMatch = html.match(/"avatar"\s*:\s*"([^"]+)"/);
     if (avMatch) authorAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
     if (!authorAvatar) { var av2 = html.match(/"headUrl"\s*:\s*"([^"]+)"/); if (av2) authorAvatar = av2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
     if (authorAvatar && authorAvatar.indexOf('http://') === 0) authorAvatar = 'https://' + authorAvatar.substring(7);
   }
-
-// 浣滆€?ID: 浼樺厛浠?window.__INITIAL_STATE__ 绛?JSON 涓彇 "userId" 鍊硷紙淇濊瘉鏄綔鑰呯殑锛?
-var jsonBlocks = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[^}]+\})/);
-  if (!jsonBlocks) jsonBlocks = html.match(/window\.__NEXT_DATA__\s*=\s*(\{[^}]+\})/);
-  if (jsonBlocks) {
-    try {
-      var jsonState = JSON.parse(jsonBlocks[1].replace(/undefined/g, 'null'));
-      // 灏濊瘯鎻愬彇浣滆€匢D
-      if (jsonState.user && jsonState.user.id) authorId = String(jsonState.user.id);
-      if (!authorId && jsonState.profile && jsonState.profile.id) authorId = String(jsonState.profile.id);
-      if (!authorId && jsonState.visionProfile && jsonState.visionProfile.userId) authorId = jsonState.visionProfile.userId;
-    } catch(e) {}
-  }
   if (!authorId) {
-    // 浠?HTML 鎻愬彇: 鎵句富视频数据鍖哄煙鐨?userId
-    var idMatch = html.match(/"photoId"[^}]{0,300}"userId"\s*:\s*"([^"]+)"/);
-    if (!idMatch) idMatch = html.match(/window\.__INITIAL_STATE__[\s\S]{0,500}"userId"\s*:\s*"(\d+)"/);
-    if (!idMatch) idMatch = html.match(/"userId"\s*:\s*"(\d+)"/);
-    if (!idMatch) idMatch = html.match(/"eid"\s*:\s*"([^"]+)"/);
-    if (!idMatch) idMatch = html.match(/"user_id"\s*:\s*"([^"]+)"/);
+    var idMatch = html.match(/"eid"\s*:\s*"([^"]+)"/) || html.match(/"userId"\s*:\s*"([^"]+)"/) || html.match(/"user_id"\s*:\s*"([^"]+)"/);
     if (idMatch) authorId = idMatch[1];
   }
 
@@ -290,6 +269,8 @@ var jsonBlocks = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[^}]+\})/);
     cover: cover || '', url: videoUrl || '', images: [],
   });
 }
+
+// ===== 小红书 =====
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
@@ -303,13 +284,13 @@ async function parseXiaohongshu(originalUrl) {
   if (h1Match) title = h1Match[1].trim();
   var nameMatch = html.match(/note-card-name[^>]*><!--\[-->([^<]+)/);
   if (nameMatch) authorName = nameMatch[1].trim();
-  var avaMatch = html.match(/<img[^>]*alt=["']婢舵潙鍎歔"'][^>]*src=["']([^"']+)["']/);
+  var avaMatch = html.match(/<img[^>]*alt=["']头像["'][^>]*src=["']([^"']+)["']/);
   if (avaMatch) authorAvatar = avaMatch[1];
 
   var userIdMatch = html.match(/"userId"\s*:\s*"([^"]+)"/);
   if (userIdMatch) authorId = userIdMatch[1];
 
-  // __INITIAL_STATE__ 鐟欙絾鐎?
+  // __INITIAL_STATE__ 解析
   var stateStart = html.indexOf('__INITIAL_STATE__=');
   if (stateStart >= 0) {
     stateStart += '__INITIAL_STATE__='.length;
@@ -326,18 +307,41 @@ async function parseXiaohongshu(originalUrl) {
         if (ch === '}') depth--;
       }
       if (depth === 0) {
-        try {
-          var state = JSON.parse(html.substring(stateStart, endIdx).replace(/undefined/g, 'null'));
-          var noteDetail = state.note && state.note.noteDetailMap;
-          if (noteDetail) {
-            var keys = Object.keys(noteDetail);
-            if (keys.length) {
-              var note = noteDetail[keys[0]] && noteDetail[keys[0]].note;
-              if (note) {
-                if (!title) title = note.title || note.desc || '';
-                if (!authorName) authorName = (note.user && note.user.nickname) || '';
-                if (!authorAvatar) authorAvatar = (note.user && note.user.avatar) || '';
-                if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || '';
+            // 优先: 非 DASH 格式 (fnval=0, 返回 MP4/FLV 直链)
+    var qualities = [80, 64, 48, 32, 16];
+    for (var qi = 0; qi < qualities.length; qi++) {
+      try {
+        var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=' + qualities[qi] + '&fnval=0&fourk=1&platform=web', {
+          headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
+        });
+        var pt = await pr.text();
+        if (pt.trim().startsWith('{')) {
+          var pj = JSON.parse(pt);
+          if (pj.code === 0 && pj.data && pj.data.durl && pj.data.durl.length) {
+            var url = pj.data.durl[0].url;
+            if (url) { videoUrl = url; break; }
+          }
+        }
+      } catch(e) { /* skip */ }
+    }
+    // 兜底: DASH 格式 (fnval=16, 返回 .m4s)
+    if (!videoUrl) {
+      try {
+        var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1&platform=web', {
+          headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
+        });
+        var pt = await pr.text();
+        if (pt.trim().startsWith('{')) {
+          var pj = JSON.parse(pt);
+          if (pj.code === 0) {
+            var d = pj.data;
+            if (d.dash && d.dash.video && d.dash.video.length) videoUrl = d.dash.video[0].baseUrl || d.dash.video[0].base_url || '';
+            else if (d.durl && d.durl.length) videoUrl = d.durl[0].url;
+          }
+        }
+      } catch(e) {}
+    }
+  }cover) cover = note.cover.urlDefault || note.cover.url || '';
                 if (!authorId && note.user) authorId = note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
@@ -387,7 +391,7 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  // masterUrl 濮濓絽鍨崗婊冪俺
+  // masterUrl 正则兜底
   if (!videoUrl && !images.length) {
     var muMatch = html.match(/"masterUrl"\s*:\s*"([^"]+)"/);
     if (muMatch) {
@@ -421,7 +425,7 @@ async function parseTiktok(originalUrl) {
 
   var videoUrl = "", cover = "", title = "", authorName = "", authorId = "", authorAvatar = "";
 
-  // 閺傝纭?: 閻?oEmbed API 閼惧嘲褰囨担婊嗏偓鍛繆閹垽绱欓張鈧崣顖炴浆閿涘矁绻戦崶鐐垫畱閺勵垰甯担婊嗏偓鍜冪礆
+  // 方法1: 用 oEmbed API 获取作者信息（最可靠，返回的是原作者）
   try {
     var oembedResp = await fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(realUrl || originalUrl));
     if (oembedResp.ok) {
@@ -436,11 +440,11 @@ async function parseTiktok(originalUrl) {
     }
   } catch(e) {}
 
-  // 閺傝纭?: 娴犲酣銆夐棃顫厬閸欐牞顫嬫０鎴濇勾閸р偓
+  // 方法2: 从页面中取视频地址
   var paMatch = html.match(/"playAddr":"([^"]+)"/);
   if (paMatch) videoUrl = paMatch[1].replace(/\\u002F/g, '/');
 
-  // 鐏忎線娼?閺嶅洭顣介崗婊冪俺
+  // 封面/标题兜底
   if (!cover) {
     var covMatch = html.match(/"cover":"([^"]+)"/);
     if (covMatch) cover = covMatch[1].replace(/\\u002F/g, '/');
@@ -450,7 +454,8 @@ async function parseTiktok(originalUrl) {
     if (descMatch) title = descMatch[1];
   }
 
-  // 婢舵潙鍎氶敍姘辨暏 uniqueId 閸樿缍旈懓鍛瘜妞ゅ灚瀣侀敍鍫濆斧娴ｆ粏鈧懐娈戦敍灞肩瑝閺勵垰鍨庢禍顐モ偓鍛畱閿?  if (!authorAvatar && authorId) {
+  // 头像：用 uniqueId 去作者主页拿（原作者的，不是分享者的）
+  if (!authorAvatar && authorId) {
     try {
       var profileResp = await fetch('https://www.tiktok.com/@' + encodeURIComponent(authorId), {
         headers: { 'User-Agent': UA, 'Accept': 'text/html' },
@@ -463,7 +468,8 @@ async function parseTiktok(originalUrl) {
     } catch(e) {}
   }
 
-  // 娴ｆ粏鈧懍淇婇幁顖氬幑鎼存洩绱欐禒?HTML 閹绘劕褰囬敍?  if (!authorId) {
+  // 作者信息兜底（从 HTML 提取）
+  if (!authorId) {
     var allNick = html.match(/"nickname":"([^"]+)"/g);
     var allUid = html.match(/"uniqueId":"([^"]+)"/g);
     var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
@@ -480,21 +486,21 @@ async function parseTiktok(originalUrl) {
     cover: cover || "", url: videoUrl || "", images: [],
   });
 }
-// ===== 鐟楄法鎽愮憴鍡涱暥 =====
+// ===== 西瓜视频 =====
 async function parseXigua(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.ixigua.com/' });
 
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
 
-// og:title / og:image閿涘牊鏁為幇蹇氥偪閻℃粏顫嬫０鎴犳暏 name= 閼板奔绗夐弰?property=閿?
-var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
-  if (tMatch) title = tMatch[1].replace(/\|\s*鐟楄法鎽愮憴鍡涱暥$/, '').trim();
+  // og:title / og:image（注意西瓜视频用 name= 而不是 property=）
+  var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
+  if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
   var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
   if (iMatch) cover = iMatch[1];
 
-// media_user 娴ｆ粏鈧懍淇婇幁?
-var muMatch = html.match(/"media_user":\{[^}]+\}/);
+  // media_user 作者信息
+  var muMatch = html.match(/"media_user":\{[^}]+\}/);
   if (muMatch) {
     var mu = muMatch[0];
     var sn = mu.match(/"screen_name":"([^"]+)"/);
@@ -505,7 +511,8 @@ var muMatch = html.match(/"media_user":\{[^}]+\}/);
     if (idM) authorId = idM[1];
   }
 
-  // 閸忔粌绨抽敍姘辨暏 alapi 閹恒儱褰涢懢宄板絿鐟欏棝顣堕崷鏉挎絻閿涘牆顩ч弸婊堛€夐棃銏″瑏娑撳秴鍩岄敍?  if (!videoUrl) {
+  // 兜底：用 alapi 接口获取视频地址（如果页面拿不到）
+  if (!videoUrl) {
     try {
       var apiUrl = 'https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(realUrl || originalUrl);
       var apiResp = await fetch(apiUrl, { headers: { 'User-Agent': UA } });
@@ -517,7 +524,7 @@ var muMatch = html.match(/"media_user":\{[^}]+\}/);
           if (!cover) cover = apiJson.data.cover_url || '';
         }
       }
-    } catch(e) { /* alapi 閹恒儱褰涚拫鍐暏婢惰精瑙﹂敍灞芥嫹閻?*/ }
+    } catch(e) { /* alapi 接口调用失败，忽略 */ }
   }
 
   if (!title && !cover) return fail('未提取到西瓜视频信息');
@@ -530,25 +537,22 @@ var muMatch = html.match(/"media_user":\{[^}]+\}/);
 }
 
 
-// ===== A缁?=====
+// ===== A站 =====
 async function parseAcfun(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.acfun.cn/' });
 
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
 
-  // 鎻愬彇 ac id
+  // 提取 ac id
   var acMatch = realUrl.match(/[?&]ac=(\d+)/);
   if (!acMatch) return fail('未识别到AC号');
 
-  var viKeys = ['window.videoInfo =', 'let videoInfo =', 'const videoInfo =', 'window.__INITIAL_STATE__ ='];
-  for (var vi = 0; vi < viKeys.length; vi++) {
-    var viStart = html.indexOf(viKeys[vi]);
-    if (viStart < 0) continue;
-    viStart += viKeys[vi].length;
-    while (viStart < html.length && html[viStart] === ' ') viStart++;
-    if (html[viStart] !== '{') continue;
-    var depth = 0, inStr = false, escape = false, ve = viStart;
+  // 解析 window.videoInfo
+  var viStart = html.indexOf('window.videoInfo =');
+  if (viStart >= 0) {
+    var vs = viStart + 'window.videoInfo ='.length;
+    var depth = 0, inStr = false, escape = false, ve = vs;
     for (; ve < html.length; ve++) {
       var ch = html[ve];
       if (escape) { escape = false; continue; }
@@ -556,78 +560,52 @@ async function parseAcfun(originalUrl) {
       if (ch === '"' && !escape) { inStr = !inStr; continue; }
       if (inStr) continue;
       if (ch === '{') depth++;
-      if (ch === '}') { if (depth === 1) { ve++; break; } depth--; }
+      if (ch === '}') depth--;
+      if (depth === 0 && ch === '}') { ve++; break; }
     }
     try {
-      var parsed = JSON.parse(html.substring(viStart, ve).replace(/undefined/g, 'null'));
-      if (!title) title = parsed.title || parsed.videoTitle || '';
-      if (!cover) cover = parsed.cover || parsed.videoCover || parsed.image || '';
-      if (!authorName) authorName = parsed.username || (parsed.user && parsed.user.name) || '';
-      if (!authorId) authorId = parsed.userId || (parsed.user && (parsed.user.id || parsed.user.userId)) || '';
-      if (!authorAvatar) authorAvatar = parsed.userAvatar || (parsed.user && parsed.user.avatar) || '';
+      var vi = JSON.parse(html.substring(vs, ve));
+      title = vi.title || '';
+      cover = vi.cover || vi.videoCover || '';
     } catch(e) {}
-    if (title) break;
   }
 
-  // 2. 解析 playInfo锛堣棰戝湴鍧€锛?
-  var piKeys = ['var playInfo =', 'let playInfo =', 'const playInfo =', 'window.playInfo ='];
-  for (var pi = 0; pi < piKeys.length; pi++) {
-    var piStart = html.indexOf(piKeys[pi]);
-    if (piStart < 0) continue;
-    piStart += piKeys[pi].length;
-    while (piStart < html.length && html[piStart] === ' ') piStart++;
-    if (html[piStart] !== '{') continue;
-    var dep = 0, ins = false, esc = false, pend = piStart;
-    for (; pend < html.length; pend++) {
-      var c = html[pend];
-      if (esc) { esc = false; continue; }
-      if (c === '\\' && ins) { esc = true; continue; }
-      if (c === '"' && !esc) { ins = !ins; continue; }
-      if (ins) continue;
-      if (c === '{') dep++;
-      if (c === '}') { if (dep === 1) { pend++; break; } dep--; }
+  // 解析 var playInfo（视频流地址）
+  var piStart = html.indexOf('var playInfo =');
+  if (piStart >= 0) {
+    var ps = piStart + 'var playInfo ='.length;
+    var dep2 = 0, ins2 = false, esc2 = false, pe = ps;
+    for (; pe < html.length; pe++) {
+      var ch2 = html[pe];
+      if (esc2) { esc2 = false; continue; }
+      if (ch2 === '\\' && ins2) { esc2 = true; continue; }
+      if (ch2 === '"' && !esc2) { ins2 = !ins2; continue; }
+      if (ins2) continue;
+      if (ch2 === '{') dep2++;
+      if (ch2 === '}') dep2--;
+      if (dep2 === 0 && ch2 === '}') { pe++; break; }
     }
     try {
-      var pi = JSON.parse(html.substring(piStart, pend).replace(/undefined/g, 'null'));
+      var pi = JSON.parse(html.substring(ps, pe));
       if (pi.streams && pi.streams.length) {
-        for (var si = pi.streams.length - 1; si >= 0; si--) {
-          var stream = pi.streams[si];
-          if (stream.playUrls && stream.playUrls.length) {
-            for (var ui = 0; ui < stream.playUrls.length; ui++) {
-              var u = stream.playUrls[ui];
-              if (u && (u.indexOf('http') >= 0 || u.indexOf('//') >= 0)) { videoUrl = u; break; }
-            }
-            if (videoUrl) break;
-          }
-          if (!videoUrl && stream.subStreams && stream.subStreams.length) {
-            for (var si2 = 0; si2 < stream.subStreams.length; si2++) {
-              var sub = stream.subStreams[si2];
-              if (sub.url && (sub.url.indexOf('http') >= 0 || sub.url.indexOf('//') >= 0)) { videoUrl = sub.url; if (videoUrl.indexOf('//') === 0) videoUrl = 'https:' + videoUrl; break; }
-            }
+        // 取最高画质的播放地址
+        for (var si = 0; si < pi.streams.length; si++) {
+          if (pi.streams[si].playUrls && pi.streams[si].playUrls.length) {
+            videoUrl = pi.streams[si].playUrls[0];
+            break;
           }
         }
       }
     } catch(e) {}
-    if (videoUrl) break;
   }
 
-  // 3. HTML 姝ｅ垯鍏滃簳
-  if (!videoUrl) {
-    var urlMatch = html.match(/https?:\/\/[^"' ]+\.(?:mp4|m3u8|flv)[^"' ]*/);
-    if (urlMatch) videoUrl = urlMatch[0];
-  }
-
-  // 4. OG / title 鍏滃簳
-  if (!title) { var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/); if (ogT) title = ogT[1]; }
-  if (!cover) { var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/); if (ogI) cover = ogI[1]; }
-  if (!title) { var tTag = html.match(/<title>([^<]+)<\/title>/); if (tTag) title = tTag[1].replace(/\s*_?\s*AcFun\s*$/i, '').trim(); }
-
-  // 5. 浣滆€呬俊鎭厹搴?  if (!authorName) { var nm = html.match(/<span\s+class="up-name">([^<]+)<\/span>/); if (nm) authorName = nm[1].trim(); }
-  if (!authorName) { var nm2 = html.match(/"username"\s*:\s*"([^"]+)"/); if (nm2) authorName = nm2[1]; }
-  if (!authorAvatar) { var av = html.match(/<span class="up-avatar"><img src="([^"]+)"/); if (av) authorAvatar = av[1]; }
-  if (!authorAvatar) { var av2 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (av2) authorAvatar = av2[1]; }
-  if (!authorId) { var uid = html.match(/\/upPage\/(\d+)/); if (uid) authorId = uid[1]; }
-  if (!authorId) { var uid2 = html.match(/"userId"\s*:\s*"(\d+)"/); if (uid2) authorId = uid2[1]; }
+  // 从 HTML 中提取作者信息
+  var nameMatch = html.match(/<span\s+class="up-name">([^<]+)<\/span>/);
+  if (nameMatch) authorName = nameMatch[1].trim();
+  var avatarMatch = html.match(/<span class="up-avatar"><img src="([^"]+)"/);
+  if (avatarMatch) authorAvatar = avatarMatch[1];
+  var uidMatch = html.match(/\/upPage\/(\d+)/);
+  if (uidMatch) authorId = uidMatch[1];
 
   if (!title && !cover) return fail('未提取到A站视频信息');
 
@@ -637,27 +615,30 @@ async function parseAcfun(originalUrl) {
     cover: cover || '', url: videoUrl || '', images: [],
   });
 }
+
+// ===== 微博 =====
 async function parseWeibo(originalUrl) {
-  // 娴犲骸鎮囩粔宥夋懠閹恒儲鐗稿蹇涘櫡閹绘劕褰?mid
+  // 从各种链接格式里提取 mid
   var mid = null;
 
-  // 閺嶇厧绱?: m.weibo.cn/detail/xxx 閹?/status/xxx
+  // 格式1: m.weibo.cn/detail/xxx 或 /status/xxx
   var m1 = originalUrl.match(/\/(?:detail|status)\/(\d{10,})/);
   if (m1) mid = m1[1];
 
-  // 閺嶇厧绱?: weibo.com/閺佹澘鐡?mid
+  // 格式2: weibo.com/数字/mid
   if (!mid) {
     var m2 = originalUrl.match(/weibo\.com\/\d+\/(\w+)$/);
     if (m2) mid = m2[1];
   }
 
-  // 閺嶇厧绱?: 娴?t.cn 閹存湌TML娑擃厽褰侀崣?  if (!mid) {
+  // 格式3: 从 t.cn 或HTML中提取
+  if (!mid) {
     try {
-// 閸忓牆鐨剧拠鏇＄儲鏉?    
-var realUrl = await resolveRedirect(originalUrl);
+      // 先尝试跳转
+      var realUrl = await resolveRedirect(originalUrl);
       var m3 = realUrl.match(/\/(?:detail|status)\/(\d{10,})/);
       if (m3) mid = m3[1];
-      // 娴犲订TML娑擃厽宕琺id
+      // 从HTML中捞mid
       if (!mid) {
         var html = await fetchHtml(originalUrl, { Referer: 'https://weibo.com/', 'User-Agent': UA });
         var m4 = html.match(/["']mid["']\s*:\s*["']?(\d{10,})["']?/);
@@ -670,7 +651,8 @@ var realUrl = await resolveRedirect(originalUrl);
 
   if (!mid) return fail('无法从微博链接中提取视频ID，t.cn短链可能已被拦截');
 
-  // 鐠嬪啰些閸斻劎顏?statuses 閹恒儱褰?  try {
+  // 调移动端 statuses 接口
+  try {
     var apiRes = await fetch('https://m.weibo.cn/statuses/show?id=' + mid, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
@@ -713,7 +695,7 @@ var realUrl = await resolveRedirect(originalUrl);
 }
 
 
-// ===== 瀵邦喕淇婄憴鍡涱暥閸欏嚖绱檝ia BUGPK 娑擃叀娴嗛敍?=====
+// ===== 微信视频号（via BUGPK 中转） =====
 async function parseWeixin(originalUrl) {
   var apiUrl = 'https://api.bugpk.com/api/?url=' + encodeURIComponent(originalUrl);
   try {
@@ -739,7 +721,7 @@ async function parseWeixin(originalUrl) {
 }
 
 
-// ===== 娑撹鍙嗛崣?=====
+// ===== 主入口 =====
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -769,4 +751,3 @@ module.exports = async (req, res) => {
     res.status(500).json(fail('解析失败: ' + (e && e.message ? e.message : String(e))));
   }
 };
-
