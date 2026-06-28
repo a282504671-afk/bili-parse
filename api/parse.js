@@ -124,69 +124,60 @@ async function parseBilibili(originalUrl) {
   var info = null;
   var videoUrl = '';
 
-  // 方式1: 页面 HTML
+  // 方式1: 直连 B站 API
   try {
-    var html = await fetchHtml(realUrl, { Referer: 'https://www.bilibili.com/' });
-    var stateStr = null;
-    var m1 = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]+?\})\s*;?\s*(?:<\/script>|\(function)/);
-    if (m1) stateStr = m1[1];
-    if (!stateStr) {
-      var m2 = html.match(/<script id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]+?)<\/script>/);
-      if (m2) stateStr = m2[1];
-    }
-    if (stateStr) {
-      var state = JSON.parse(stateStr.replace(/undefined/g, 'null'));
-      var vd = state.videoData || state.videoInfo || (state.video && state.video.info);
-      if (vd) info = { title: vd.title, desc: vd.desc, pic: vd.pic, owner: vd.owner || {}, cid: vd.cid, aid: vd.aid };
-    }
-    if (!info || !info.title) {
-      var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
-      var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
-      if (ogT || ogI) {
-        if (!info) info = { title: '', desc: '', pic: '', owner: { name: '', mid: '', face: '' }, cid: 0, aid: 0 };
-        if (ogT && !info.title) info.title = ogT[1];
-        if (ogI && !info.pic) info.pic = ogI[1];
+    var vr = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
+      headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
+    });
+    if (vr.ok) {
+      var vj = await vr.json();
+      if (vj.data) {
+        var vd = vj.data;
+        info = {
+          title: vd.title || '', desc: vd.desc || '', pic: vd.pic || '',
+          owner: vd.owner || { name: '', mid: '', face: '' },
+          cid: vd.cid || 0, aid: vd.aid || 0,
+        };
       }
     }
   } catch(e) {}
 
-  // 方式2: API
-  if (!info || !info.aid || !info.cid) {
+  // 方式2: 直连失败 → BUGPK 代理
+  if (!info) {
     try {
-      var vr = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
-        headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
+      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
+        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
       });
-      var vt = await vr.text();
-      if (vt.trim().startsWith('{')) {
-        var vj = JSON.parse(vt);
-        if (vj.code === 0 && vj.data) {
-          var vd = vj.data;
-          if (!info) info = { title: '', desc: '', pic: '', owner: { name: '', mid: '', face: '' }, cid: 0, aid: 0 };
-          if (!info.title) info.title = vd.title || '';
-          if (!info.desc) info.desc = vd.desc || '';
-          if (!info.pic) info.pic = vd.pic || '';
-          if (vd.owner) info.owner = { name: vd.owner.name || info.owner.name, mid: vd.owner.mid || info.owner.mid, face: vd.owner.face || info.owner.face };
-          if (!info.cid && vd.cid) info.cid = vd.cid;
-          if (!info.aid && vd.aid) info.aid = vd.aid;
+      if (bpRes.ok) {
+        var bpJson = await bpRes.json();
+        if (bpJson.code === 200 && bpJson.data) {
+          var bpData = bpJson.data;
+          info = {
+            title: bpData.title || bpData.desc || '',
+            desc: bpData.desc || bpData.title || '',
+            pic: bpData.cover || '',
+            owner: { name: bpData.author && bpData.author.name || bpData.auther || '', mid: bpData.author && bpData.author.id || '', face: bpData.author && bpData.author.avatar || '' },
+            cid: 0, aid: 0,
+          };
+          videoUrl = bpData.url || '';
         }
       }
     } catch(e) {}
   }
 
-  if (!info || (!info.title && !info.pic)) return fail('获取B站视频信息失败');
+  if (!info) return fail('获取B站视频信息失败');
 
-  if (info.cid && info.aid) {
+  if (!videoUrl && info.cid && info.aid) {
     try {
       var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1', {
         headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
       });
-      var pt = await pr.text();
-      if (pt.trim().startsWith('{')) {
-        var pj = JSON.parse(pt);
-        if (pj.code === 0) {
+      if (pr.ok) {
+        var pj = await pr.json();
+        if (pj.code === 0 && pj.data) {
           var d = pj.data;
           if (d.dash && d.dash.video && d.dash.video.length) videoUrl = d.dash.video[0].baseUrl || d.dash.video[0].base_url || '';
-          else if (d.durl && d.durl.length) videoUrl = d.durl[0].url;
+          if (!videoUrl && d.durl && d.durl.length) videoUrl = d.durl[0].url;
         }
       }
     } catch(e) {}
@@ -380,69 +371,35 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  var videoUrl = "", cover = "", title = "", authorName = "", authorId = "", authorAvatar = "";
+  // TikTok 页面里第一个用户是分享者/当前登录用户，最后一个才是视频原作者
+  var allNick = html.match(/"nickname":"([^"]+)"/g);
+  var allUid = html.match(/"uniqueId":"([^"]+)"/g);
+  var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
 
-  // 方法1: 用 oEmbed API 获取作者信息（最可靠，返回的是原作者）
-  try {
-    var oembedResp = await fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(realUrl || originalUrl));
-    if (oembedResp.ok) {
-      var oembed = await oembedResp.json();
-      title = oembed.title || "";
-      authorName = oembed.author_name || "";
-      if (oembed.author_url) {
-        var auM = oembed.author_url.match(/@([^/?#]+)/);
-        if (auM) authorId = auM[1];
-      }
-      cover = oembed.thumbnail_url || "";
-    }
-  } catch(e) {}
-
-  // 方法2: 从页面中取视频地址
   var paMatch = html.match(/"playAddr":"([^"]+)"/);
-  if (paMatch) videoUrl = paMatch[1].replace(/\\u002F/g, '/');
+  var coverMatch = html.match(/"cover":"([^"]+)"/);
+  var descMatch = html.match(/"desc":"([^"]+)"/);
 
-  // 封面/标题兜底
-  if (!cover) {
-    var covMatch = html.match(/"cover":"([^"]+)"/);
-    if (covMatch) cover = covMatch[1].replace(/\\u002F/g, '/');
-  }
-  if (!title) {
-    var descMatch = html.match(/"desc":"([^"]+)"/);
-    if (descMatch) title = descMatch[1];
-  }
+  // 取最后一个值（原作者）
+  var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
+  var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
+  var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
 
-  // 头像：用 uniqueId 去作者主页拿（原作者的，不是分享者的）
-  if (!authorAvatar && authorId) {
-    try {
-      var profileResp = await fetch('https://www.tiktok.com/@' + encodeURIComponent(authorId), {
-        headers: { 'User-Agent': UA, 'Accept': 'text/html' },
-      });
-      if (profileResp.ok) {
-        var profileHtml = await profileResp.text();
-        var avData = profileHtml.match(/data-avatarUrl="([^"]+)"/);
-        if (avData) authorAvatar = decodeURIComponent(avData[1]);
-      }
-    } catch(e) {}
-  }
+  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
+  var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
+  var title = descMatch ? descMatch[1] : '';
 
-  // 作者信息兜底（从 HTML 提取）
-  if (!authorId) {
-    var allNick = html.match(/"nickname":"([^"]+)"/g);
-    var allUid = html.match(/"uniqueId":"([^"]+)"/g);
-    var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
-    authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
-    authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
-    authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
-  }
+  if (!videoUrl) return fail('未提取到TikTok视频地址');
 
-  if (!videoUrl) return fail("未提取到TikTok视频地址");
-
-  return ok("tiktok", {
-    type: "video", title: title || "", desc: title || "",
-    author: { name: authorName || "", id: authorId || "", avatar: authorAvatar || "" },
-    cover: cover || "", url: videoUrl || "", images: [],
+  return ok('tiktok', {
+    type: 'video', title: title || '', desc: title || '',
+    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+    cover: cover || '', url: videoUrl || '', images: [],
   });
 }
+
+
+
 // ===== 西瓜视频 =====
 async function parseXigua(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
@@ -450,7 +407,7 @@ async function parseXigua(originalUrl) {
 
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
 
-  // og:title / og:image（注意西瓜视频用 name= 而不是 property=）
+  // og:title / og:image（西瓜视频用 name= 而不是 property=）
   var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
   if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
   var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
@@ -468,23 +425,23 @@ async function parseXigua(originalUrl) {
     if (idM) authorId = idM[1];
   }
 
-  // 兜底：用 alapi 接口获取视频地址（如果页面拿不到）
-  if (!videoUrl) {
-    try {
-      var apiUrl = 'https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(realUrl || originalUrl);
-      var apiResp = await fetch(apiUrl, { headers: { 'User-Agent': UA } });
-      if (apiResp.ok) {
-        var apiJson = await apiResp.json();
-        if (apiJson.success && apiJson.data && apiJson.data.video_url) {
-          videoUrl = apiJson.data.video_url;
-          if (!title) title = apiJson.data.title || '';
-          if (!cover) cover = apiJson.data.cover_url || '';
-        }
+  // ALAPI 获取视频地址（付费接口）
+  try {
+    var apiResp = await fetch('https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(realUrl || originalUrl), {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+    });
+    if (apiResp.ok) {
+      var apiJson = await apiResp.json();
+      if (apiJson.success && apiJson.data) {
+        var ad = apiJson.data;
+        if (ad.video_url) videoUrl = ad.video_url;
+        if (!title && ad.title) title = ad.title;
+        if (!cover && ad.cover_url) cover = ad.cover_url;
       }
-    } catch(e) { /* alapi 接口调用失败，忽略 */ }
-  }
+    }
+  } catch(e) {}
 
-  if (!title && !cover) return fail('未提取到西瓜视频信息');
+  if (!title && !cover && !videoUrl) return fail('未提取到西瓜视频信息');
 
   return ok('ixigua', {
     type: 'video', title: title || '', desc: title || '',
@@ -492,7 +449,6 @@ async function parseXigua(originalUrl) {
     cover: cover || '', url: videoUrl || '', images: [],
   });
 }
-
 
 // ===== A站 =====
 async function parseAcfun(originalUrl) {
@@ -588,7 +544,19 @@ async function parseWeibo(originalUrl) {
     if (m2) mid = m2[1];
   }
 
-  // 格式3: 从 t.cn 或HTML中提取
+  // 格式3: video.weibo.com/show?fid=1034:数字
+  if (!mid) {
+    var fidMatch = originalUrl.match(/fid=1034[:/](\d+)/);
+    if (fidMatch) mid = fidMatch[1];
+  }
+
+  // 格式4: weibo.com/tv/show/1034:数字
+  if (!mid) {
+    var tvMatch = originalUrl.match(/\/tv\/show\/(?:1034:)?(\d+)/);
+    if (tvMatch) mid = tvMatch[1];
+  }
+
+  // 格式5: 从 t.cn 或HTML中提取
   if (!mid) {
     try {
       // 先尝试跳转
@@ -654,14 +622,15 @@ async function parseWeibo(originalUrl) {
 
 // ===== 微信视频号（via BUGPK 中转） =====
 async function parseWeixin(originalUrl) {
-  var apiUrl = 'https://api.bugpk.com/api/?url=' + encodeURIComponent(originalUrl);
   try {
-    var res = await fetch(apiUrl, {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+    var res = await fetch('https://api.bugpk.com/api/short_videos', {
+      method: 'POST',
+      headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'url=' + encodeURIComponent(originalUrl),
     });
     if (res.ok) {
       var json = await res.json();
-      if (json.code === 200 && json.data) {
+      if (json.code === 200 && json.data && json.data.url) {
         var d = json.data;
         return ok('weixin', {
           type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
@@ -669,14 +638,29 @@ async function parseWeixin(originalUrl) {
           cover: d.cover || '', url: d.url || '', images: [],
         });
       }
-      return fail('BUGPK 解析失败: ' + (json.msg || '未知错误'));
     }
-    return fail('BUGPK 接口返回 HTTP ' + res.status);
-  } catch(e) {
-    return fail('请求 BUGPK 接口失败: ' + e.message);
-  }
-}
+  } catch(e) {}
 
+  try {
+    var apiUrl = 'https://api.bugpk.com/api/?url=' + encodeURIComponent(originalUrl);
+    var res2 = await fetch(apiUrl, {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+    });
+    if (res2.ok) {
+      var json2 = await res2.json();
+      if (json2.code === 200 && json2.data && json2.data.url) {
+        var d2 = json2.data;
+        return ok('weixin', {
+          type: 'video', title: d2.title || d2.desc || '', desc: d2.desc || d2.title || '',
+          author: { name: (d2.author && d2.author.name) || '', id: (d2.author && d2.author.id) || '', avatar: (d2.author && d2.author.avatar) || '' },
+          cover: d2.cover || '', url: d2.url || '', images: [],
+        });
+      }
+    }
+  } catch(e) {}
+
+  return fail('微信视频号解析失败');
+}
 
 // ===== 主入口 =====
 module.exports = async (req, res) => {
