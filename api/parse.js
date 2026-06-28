@@ -293,7 +293,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!authorId && note.user) authorId = note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (candidates.length) videoUrl = candidates[0].masterUrl || candidates[0].no_watermark_url || candidates[0].url || (candidates[0].backupUrls && candidates[0].backupUrls[0]) || '';
+                  if (candidates.length) videoUrl = candidates[0].no_watermark_url || candidates[0].masterUrl || candidates[0].url || (candidates[0].backupUrls && candidates[0].backupUrls[0]) || '';
                 }
                 if (note.imageList && note.imageList.length) {
                   note.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
@@ -326,7 +326,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!cover) cover = note.cover && (note.cover.url_default || note.cover.url) || '';
                 if (!videoUrl && note.video && note.video.media && note.video.media.stream) {
                   var c = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (c.length) videoUrl = c[0].masterUrl || c[0].no_watermark_url || c[0].url || (c[0].backupUrls && c[0].backupUrls[0]) || '';
+                  if (c.length) videoUrl = c[0].no_watermark_url || c[0].masterUrl || c[0].url || (c[0].backupUrls && c[0].backupUrls[0]) || '';
                 }
                 if (!images.length && note.image_list && note.image_list.length) {
                   note.image_list.forEach(function(img) { images.push(img.url_default || img.url || ''); });
@@ -512,7 +512,7 @@ async function parseAcfun(originalUrl) {
     } catch(e) {}
   }
 
-  // 从 HTML 中提取作者信息
+  // 从 HTML 中提取作者信息  // 从 HTML 中提取作者信息
   var nameMatch = html.match(/<span\s+class="up-name">([^<]+)<\/span>/);
   if (nameMatch) authorName = nameMatch[1].trim();
   var avatarMatch = html.match(/<span class="up-avatar"><img src="([^"]+)"/);
@@ -692,3 +692,5 @@ module.exports = async (req, res) => {
     res.status(500).json(fail('解析失败: ' + (e && e.message ? e.message : String(e))));
   }
 };
+
+
