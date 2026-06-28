@@ -541,123 +541,89 @@ async function parseAcfun(originalUrl) {
   var acMatch = realUrl.match(/[?&]ac=(\d+)/);
   if (!acMatch) return fail('未识别到AC号');
 
-  // ===== 解析 window.videoInfo (标题、封面、UP主) =====
-  var viPatterns = [
-    /window\.videoInfo\s*=\s*/,
-    /window\.__INITIAL_STATE__\s*=\s*/,
-    /let\s+videoInfo\s*=\s*/,
-    /const\s+videoInfo\s*=\s*/,
-  ];
-  for (var viPat = 0; viPat < viPatterns.length; viPat++) {
-    var viStart = html.search(viPatterns[viPat]);
-    if (viStart >= 0) {
-      viStart = viStart + (viPatterns[viPat].source.length - 2); // 修复正则长度
-      // 调整实际偏移
-      var patStr = viPatterns[viPat].source;
-      viStart = html.indexOf(patStr.substring(0, patStr.length - 2), viStart - 30);
-      if (viStart < 0) continue;
-      viStart = html.indexOf('=', html.indexOf('videoInfo', viStart) >= 0 ? html.indexOf('videoInfo', viStart) : 0);
-      if (viStart < 0) continue;
-      viStart++;
-      while (viStart < html.length && html[viStart] === ' ') viStart++;
-      if (html[viStart] === '{') {
-        var depth = 0, inStr = false, escape = false, ve = viStart;
-        for (; ve < html.length; ve++) {
-          var ch = html[ve];
-          if (escape) { escape = false; continue; }
-          if (ch === '\\' && inStr) { escape = true; continue; }
-          if (ch === '"' && !escape) { inStr = !inStr; continue; }
-          if (inStr) continue;
-          if (ch === '{') depth++;
-          if (ch === '}') { if (depth === 1) { ve++; break; } depth--; }
-        }
-        try {
-          var parsed = JSON.parse(html.substring(viStart, ve).replace(/undefined/g, 'null'));
-          if (!title) title = parsed.title || parsed.videoTitle || '';
-          if (!cover) cover = parsed.cover || parsed.videoCover || parsed.image || '';
-          if (!authorName) authorName = parsed.username || (parsed.user && parsed.user.name) || '';
-          if (!authorId) authorId = parsed.userId || (parsed.user && (parsed.user.id || parsed.user.userId)) || '';
-          if (!authorAvatar) authorAvatar = parsed.userAvatar || (parsed.user && parsed.user.avatar) || '';
-        } catch(e) {}
-        break;
-      }
+  // 1. 解析 window.videoInfo（标题、封面、UP主）
+  var viKeys = ['window.videoInfo =', 'let videoInfo =', 'const videoInfo =', 'window.__INITIAL_STATE__ ='];
+  for (var vi = 0; vi < viKeys.length; vi++) {
+    var viStart = html.indexOf(viKeys[vi]);
+    if (viStart < 0) continue;
+    viStart += viKeys[vi].length;
+    while (viStart < html.length && html[viStart] === ' ') viStart++;
+    if (html[viStart] !== '{') continue;
+    var depth = 0, inStr = false, escape = false, ve = viStart;
+    for (; ve < html.length; ve++) {
+      var ch = html[ve];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inStr) { escape = true; continue; }
+      if (ch === '"' && !escape) { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') { if (depth === 1) { ve++; break; } depth--; }
     }
+    try {
+      var parsed = JSON.parse(html.substring(viStart, ve).replace(/undefined/g, 'null'));
+      if (!title) title = parsed.title || parsed.videoTitle || '';
+      if (!cover) cover = parsed.cover || parsed.videoCover || parsed.image || '';
+      if (!authorName) authorName = parsed.username || (parsed.user && parsed.user.name) || '';
+      if (!authorId) authorId = parsed.userId || (parsed.user && (parsed.user.id || parsed.user.userId)) || '';
+      if (!authorAvatar) authorAvatar = parsed.userAvatar || (parsed.user && parsed.user.avatar) || '';
+    } catch(e) {}
+    if (title) break;
   }
 
-  // ===== 解析视频地址 playInfo =====
-  if (!videoUrl) {
-    var piPatterns = [
-      { start: 'var playInfo = ', end: /;\s*$/ },
-      { start: 'let playInfo = ', end: /;\s*$/ },
-      { start: 'const playInfo = ', end: /;\s*$/ },
-      { start: 'window.playInfo = ', end: /;\s*$/ },
-    ];
-    for (var piIdx = 0; piIdx < piPatterns.length; piIdx++) {
-      var piStart = html.indexOf(piPatterns[piIdx].start);
-      if (piStart < 0) continue;
-      piStart += piPatterns[piIdx].start.length;
-      while (piStart < html.length && html[piStart] === ' ') piStart++;
-      if (html[piStart] !== '{') continue;
-      var dep = 0, ins = false, esc = false, pend = piStart;
-      for (; pend < html.length; pend++) {
-        var c = html[pend];
-        if (esc) { esc = false; continue; }
-        if (c === '\\' && ins) { esc = true; continue; }
-        if (c === '"' && !esc) { ins = !ins; continue; }
-        if (ins) continue;
-        if (c === '{') dep++;
-        if (c === '}') { if (dep === 1) { pend++; break; } dep--; }
-      }
-      try {
-        var pi = JSON.parse(html.substring(piStart, pend).replace(/undefined/g, 'null'));
-        if (pi.streams && pi.streams.length) {
-          // 取最高画质的第一个播放地址
-          for (var si = pi.streams.length - 1; si >= 0; si--) {
-            var stream = pi.streams[si];
-            if (stream.playUrls && stream.playUrls.length) {
-              for (var ui = 0; ui < stream.playUrls.length; ui++) {
-                var u = stream.playUrls[ui];
-                if (u && u.indexOf('http') >= 0) { videoUrl = u; break; }
-                if (u && u.indexOf('//') >= 0) { videoUrl = 'https:' + u; break; }
-              }
-              if (videoUrl) break;
+  // 2. 解析 playInfo（视频地址）
+  var piKeys = ['var playInfo =', 'let playInfo =', 'const playInfo =', 'window.playInfo ='];
+  for (var pi = 0; pi < piKeys.length; pi++) {
+    var piStart = html.indexOf(piKeys[pi]);
+    if (piStart < 0) continue;
+    piStart += piKeys[pi].length;
+    while (piStart < html.length && html[piStart] === ' ') piStart++;
+    if (html[piStart] !== '{') continue;
+    var dep = 0, ins = false, esc = false, pend = piStart;
+    for (; pend < html.length; pend++) {
+      var c = html[pend];
+      if (esc) { esc = false; continue; }
+      if (c === '\\' && ins) { esc = true; continue; }
+      if (c === '"' && !esc) { ins = !ins; continue; }
+      if (ins) continue;
+      if (c === '{') dep++;
+      if (c === '}') { if (dep === 1) { pend++; break; } dep--; }
+    }
+    try {
+      var pi = JSON.parse(html.substring(piStart, pend).replace(/undefined/g, 'null'));
+      if (pi.streams && pi.streams.length) {
+        for (var si = pi.streams.length - 1; si >= 0; si--) {
+          var stream = pi.streams[si];
+          if (stream.playUrls && stream.playUrls.length) {
+            for (var ui = 0; ui < stream.playUrls.length; ui++) {
+              var u = stream.playUrls[ui];
+              if (u && (u.indexOf('http') >= 0 || u.indexOf('//') >= 0)) { videoUrl = u; break; }
             }
-            // 尝试 subStreams
-            if (!videoUrl && stream.subStreams && stream.subStreams.length) {
-              for (var si2 = 0; si2 < stream.subStreams.length; si2++) {
-                var sub = stream.subStreams[si2];
-                if (sub.url && sub.url.indexOf('http') >= 0) { videoUrl = sub.url; break; }
-                if (sub.url && sub.url.indexOf('//') >= 0) { videoUrl = 'https:' + sub.url; break; }
-              }
+            if (videoUrl) break;
+          }
+          if (!videoUrl && stream.subStreams && stream.subStreams.length) {
+            for (var si2 = 0; si2 < stream.subStreams.length; si2++) {
+              var sub = stream.subStreams[si2];
+              if (sub.url && (sub.url.indexOf('http') >= 0 || sub.url.indexOf('//') >= 0)) { videoUrl = sub.url; if (videoUrl.indexOf('//') === 0) videoUrl = 'https:' + videoUrl; break; }
             }
           }
         }
-        if (videoUrl) break;
-      } catch(e) {}
-    }
-  }
-
-  // ===== HTML 正则兜底: 找视频地址 =====
-  if (!videoUrl) {
-    var urlPatterns = [
-      html.match(/"url"\s*:\s*"(https?:\/\/[^"]+\.(?:mp4|m3u8|flv)[^"]*)"/),
-      html.match(/https?:\/\/[^"' ]+\.(?:mp4|m3u8|flv)[^"' ]*/),
-      html.match(/src\s*=\s*"(https?:\/\/[^"]+\.(?:mp4|m3u8|flv)[^"]*)"/),
-    ];
-    for (var ui = 0; ui < urlPatterns.length; ui++) {
-      if (urlPatterns[ui]) {
-        var matched = urlPatterns[ui][1] || urlPatterns[ui][0];
-        if (matched && matched.indexOf('http') >= 0) { videoUrl = matched; break; }
       }
-    }
+    } catch(e) {}
+    if (videoUrl) break;
   }
 
-  // ===== OG 标签兜底 =====
+  // 3. HTML 正则兜底
+  if (!videoUrl) {
+    var urlMatch = html.match(/https?:\/\/[^"' ]+\.(?:mp4|m3u8|flv)[^"' ]*/);
+    if (urlMatch) videoUrl = urlMatch[0];
+  }
+
+  // 4. OG / title 兜底
   if (!title) { var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/); if (ogT) title = ogT[1]; }
   if (!cover) { var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/); if (ogI) cover = ogI[1]; }
-  if (!title) { var titleTag = html.match(/<title>([^<]+)<\/title>/); if (titleTag) title = titleTag[1].replace(/\s*_?\s*AcFun\s*$/i, '').trim(); }
+  if (!title) { var tTag = html.match(/<title>([^<]+)<\/title>/); if (tTag) title = tTag[1].replace(/\s*_?\s*AcFun\s*$/i, '').trim(); }
 
-  // ===== 作者信息兜底 =====
+  // 5. 作者信息兜底
   if (!authorName) { var nm = html.match(/<span\s+class="up-name">([^<]+)<\/span>/); if (nm) authorName = nm[1].trim(); }
   if (!authorName) { var nm2 = html.match(/"username"\s*:\s*"([^"]+)"/); if (nm2) authorName = nm2[1]; }
   if (!authorAvatar) { var av = html.match(/<span class="up-avatar"><img src="([^"]+)"/); if (av) authorAvatar = av[1]; }
