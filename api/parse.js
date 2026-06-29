@@ -736,44 +736,36 @@ async function parseWeixin(originalUrl) {
 }
 
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
+// ===== Vercel Serverless Handler =====
+module.exports = async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
-async function handleRequest(request) {
-const url = new URL(request.url);
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Content-Type': 'application/json; charset=utf-8',
-  };
-
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
-  const targetUrl = url.searchParams.get('url');
+  const targetUrl = req.query.url;
   if (!targetUrl) {
-    return new Response(JSON.stringify(fail('缺少 url 参数', 400)), { status: 400, headers });
+    return res.status(400).json({ code: 400, msg: '缺少 url 参数' });
   }
 
   try {
     // === TikTok /proxy 代理下载 ===
-    var action = url.searchParams.get('action');
+    var action = req.query.action;
     if (action === 'proxy') {
-      var videoUrl = url.searchParams.get('video');
-      if (!videoUrl) return new Response(JSON.stringify(fail('缺少 video 参数')), { status: 400, headers });
+      var videoUrl = req.query.video;
+      if (!videoUrl) return res.status(400).json({ code: 400, msg: '缺少 video 参数' });
       var proxyRes = await fetch(videoUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', 'Referer': 'https://www.tiktok.com/', 'Origin': 'https://www.tiktok.com' },
       });
-      if (!proxyRes.ok) return new Response(JSON.stringify(fail('代理下载失败: HTTP ' + proxyRes.status)), { status: 502, headers });
-      var proxyHeaders = new Headers({
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': proxyRes.headers.get('Content-Type') || 'video/mp4',
-        'Content-Disposition': proxyRes.headers.get('Content-Disposition') || 'inline',
-        'Cache-Control': 'public, max-age=3600',
-      });
-      return new Response(proxyRes.body, { status: 200, headers: proxyHeaders });
+      if (!proxyRes.ok) return res.status(502).json({ code: 502, msg: '代理下载失败: HTTP ' + proxyRes.status });
+      var body = await proxyRes.arrayBuffer();
+      res.setHeader('Content-Type', proxyRes.headers.get('Content-Type') || 'video/mp4');
+      res.setHeader('Content-Disposition', proxyRes.headers.get('Content-Disposition') || 'inline');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.status(200).send(Buffer.from(body));
     }
 
     const platform = detectPlatform(targetUrl);
@@ -788,18 +780,10 @@ const url = new URL(request.url);
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
-      default: return new Response(JSON.stringify(fail('暂不支持该平台链接', 400)), { status: 400, headers });
+      default: return res.status(400).json({ code: 400, msg: '暂不支持该平台链接' });
     }
-    return new Response(JSON.stringify(result), { status: 200, headers });
+    return res.status(200).json(result);
   } catch (e) {
-    return new Response(JSON.stringify(fail('解析失败: ' + (e && e.message ? e.message : String(e)))), { status: 500, headers });
+    return res.status(500).json({ code: 500, msg: '解析失败: ' + (e && e.message ? e.message : String(e)) });
   }
-}
-
-
-
-
-
-
-
-
+};
