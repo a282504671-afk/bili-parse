@@ -745,6 +745,27 @@ async function parseWeibo(originalUrl) {
           if (!title && pageInfo.page_title) title = pageInfo.page_title;
         }
 
+  // BUGPK 兜底
+  if (!videoUrl) {
+    try {
+      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
+        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+      });
+      if (bpRes.ok) {
+        var bpJson = await bpRes.json();
+        if (bpJson.code === 200 && bpJson.data && bpJson.data.url) {
+          var bd = bpJson.data;
+          if (!title) title = bd.title || bd.desc || '';
+          if (!authorName) authorName = (bd.author && bd.author.name) || '';
+          if (!authorId) authorId = (bd.author && bd.author.id) || '';
+          if (!authorAvatar) authorAvatar = (bd.author && bd.author.avatar) || '';
+          if (!cover) cover = bd.cover || '';
+          videoUrl = bd.url || '';
+        }
+      }
+    } catch(e) {}
+  }
+
         if (!videoUrl) return fail('未能提取到微博视频地址');
         return ok('weibo', {
           type: 'video', title: title || '', desc: title || '',
@@ -831,6 +852,7 @@ module.exports = async (req, res) => {
     res.status(500).json(fail('解析失败: ' + (e && e.message ? e.message : String(e))));
   }
 };
+
 
 
 
