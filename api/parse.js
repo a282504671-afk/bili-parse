@@ -183,6 +183,24 @@ async function parseBilibili(originalUrl) {
     } catch(e) {}
   }
 
+  // 兜底：如果 mid 为空，尝试单独获取用户 mid
+  if (info && (!info.owner || !info.owner.mid) && bvid) {
+    try {
+      var midRes = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
+      });
+      if (midRes.ok) {
+        var midJson = await midRes.json();
+        if (midJson.data && midJson.data.owner && midJson.data.owner.mid) {
+          if (!info.owner) info.owner = {};
+          info.owner.mid = midJson.data.owner.mid;
+          if (!info.owner.name) info.owner.name = midJson.data.owner.name || '';
+          if (!info.owner.face) info.owner.face = midJson.data.owner.face || '';
+        }
+      }
+    } catch(e) {}
+  }
+
   return ok('bilibili', {
     type: 'video', title: info.title || '', desc: info.desc || '',
     author: { name: (info.owner && info.owner.name) || '', id: (info.owner && info.owner.mid && String(info.owner.mid)) || '', avatar: (info.owner && info.owner.face) || '' },
@@ -813,6 +831,7 @@ module.exports = async (req, res) => {
     res.status(500).json(fail('解析失败: ' + (e && e.message ? e.message : String(e))));
   }
 };
+
 
 
 
