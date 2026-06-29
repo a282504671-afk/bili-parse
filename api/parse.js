@@ -355,23 +355,33 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-    // 从原始HTML中搜索 xhscdn stream 直链
+    // 从原始HTML中搜索 xhscdn stream 直链（优先 sns-video-zl 无 watermark 节点）
   if (!videoUrl && !images.length) {
-    var anyStream = html.match(/https?:\\/\\/[^"'\s]*xhscdn\.com\\/stream\\/[^"'\s]+\.mp4[^"'\s]*/i) || html.match(/https?:\/\/[^"'\s]*xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
-    if (anyStream) { videoUrl = anyStream[0].replace(/&amp;/g, '&').replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+    // 先搜 sns-video-zl（无 watermark）
+    var zlMatch = html.match(/https?:\/\/[^"'\s]*sns-video-zl\.xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
+    // 再搜其他 xhscdn 节点
+    var anyStream = zlMatch || html.match(/https?:\/\/[^"'\s]*xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
+    if (anyStream) {
+      videoUrl = anyStream[0].replace(/&amp;/g, '&').replace(/\\u002F/g, '/');
+      if (videoUrl.indexOf('http://') === 0) videoUrl = 'https://' + videoUrl.substring(7);
+    }
     if (!videoUrl) {
-      var allUrls = html.match(/https?:\\/\\/[^"'']*xhscdn\.com\\/stream\\/[^"'\s]+/g);
+      var allUrls = html.match(/https?:\/\/[^"']*xhscdn\.com\/stream\/[^"'\s]+/g);
       if (allUrls && allUrls.length) {
+        // 优先选 sns-video-zl
+        var best = '';
         for (var si = 0; si < allUrls.length; si++) {
-          var su = allUrls[si].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+          var su = allUrls[si].replace(/\\u002F/g, '/');
           if (su.indexOf('http://') === 0) su = 'https://' + su.substring(7);
-          if (su.match(/\.mp4/i)) { videoUrl = su; break; }
+          if (su.match(/\.mp4/i)) {
+            if (su.indexOf('sns-video-zl') > 0) { videoUrl = su; break; }
+            if (!best) best = su;
+          }
         }
+        if (!videoUrl) videoUrl = best;
       }
     }
-  }
-
-  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
+  }if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
 
   return ok('xiaohongshu', {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
@@ -406,6 +416,25 @@ async function parseTiktok(originalUrl) {
   var title = descMatch ? descMatch[1] : '';
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
+
+  // tikwm.com 兜底（解决非浏览器请求 403 问题）
+  try {
+    var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+    });
+    if (tikRes.ok) {
+      var tikJson = await tikRes.json();
+      if (tikJson.code === 0 && tikJson.data) {
+        var td = tikJson.data;
+        if (td.hdplay || td.play || td.url) videoUrl = td.hdplay || td.play || td.url;
+        if (!authorName) authorName = (td.author && td.author.nickname) || '';
+        if (!authorId) authorId = (td.author && td.author.unique_id) || '';
+        if (!authorAvatar) authorAvatar = (td.author && td.author.avatar) || '';
+        if (!cover) cover = td.cover || '';
+        if (!title) title = td.title || '';
+      }
+    }
+  } catch(e) {}
 
   return ok('tiktok', {
     type: 'video', title: title || '', desc: title || '',
@@ -621,13 +650,12 @@ async function parseWeibo(originalUrl) {
           if (!title && pageInfo.page_title) title = pageInfo.page_title;
         }
 
-        if (videoUrl || title) {
-          return ok('weibo', {
-            type: 'video', title: title || '', desc: title || '',
-            author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-            cover: cover || '', url: videoUrl || '', images: [],
-          });
-        }
+        if (!videoUrl) return fail('未能提取到微博视频地址');
+        return ok('weibo', {
+          type: 'video', title: title || '', desc: title || '',
+          author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+          cover: cover || '', url: videoUrl || '', images: [],
+        });
       }
     }
   } catch(e) {}
