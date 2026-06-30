@@ -134,7 +134,7 @@ async function parseBilibili(originalUrl) {
   var info = null;
   var videoUrl = '';
 
-  // 方式1: 直连 B站API（跳过页面 HTML 抓取，CF Worker IP 经常被页面封锁
+  // 方式1: 直连 B站 API（跳过页面 HTML 抓取，CF Worker IP 经常被页面封）
   try {
     var vr = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
       headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
@@ -152,10 +152,10 @@ async function parseBilibili(originalUrl) {
     }
   } catch(e) {}
 
-  // 方式2: 直连失败 ，通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK，用户家庭IP 不可见）
+  // 方式2: 直连失败 → 通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK，用户家庭 IP 不可见）
   if (!info || !videoUrl) {
     try {
-      var bpRes = await fetch('https://api520.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
+      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
         headers: { 'User-Agent': UA, 'Accept': 'application/json' },
       });
       if (bpRes.ok) {
@@ -202,7 +202,7 @@ async function parseBilibili(originalUrl) {
 
   if (!info) return fail('获取B站视频信息失败，可能被海外IP限制');
 
-  // 获取播放地址（仅直连成功时尝试，BUGPK 已自带视频地址)
+  // 获取播放地址（仅直连成功时尝试，BUGPK 已自带视频地址）
   if (!videoUrl && info.cid && info.aid) {
     try {
       var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1', {
@@ -218,7 +218,7 @@ async function parseBilibili(originalUrl) {
       }
     } catch(e) {}
   }
-  // 兜底：如果mid 为空，尝试单独获取用户mid
+  // 兜底：如果 mid 为空，尝试单独获取用户 mid
   if (info && (!info.owner || !info.owner.mid) && bvid) {
     try {
       var midRes = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
@@ -244,16 +244,15 @@ async function parseBilibili(originalUrl) {
   });
 }
 
+// ===== 快手 =====
 
 async function parseKuaishou(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
   var videoUrl = '', title = '', cover = '', authorName = '', authorId = '', authorAvatar = '';
-
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
   var BAD_NAMES = ['快手用户', '神秘人', '热门用户'];
   var isValidName = function (v) { return !!v && BAD_NAMES.indexOf(v) === -1; };
-
   var photoIdMatch = realUrl.match(/photoId[=\/](\d+)/);
   var currentPhotoId = photoIdMatch ? photoIdMatch[1] : null;
 
@@ -272,7 +271,6 @@ async function parseKuaishou(originalUrl) {
     var m = html.match(patterns[i]);
     if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
   }
-
   var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
   if (ogT) title = ogT[1];
   var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
@@ -281,29 +279,26 @@ async function parseKuaishou(originalUrl) {
   if (ogV && !videoUrl) videoUrl = ogV[1];
   var ogVU = html.match(/<meta[^>]*property="og:video:url"[^>]*content="([^"]+)"/);
   if (ogVU && !videoUrl) videoUrl = ogVU[1];
-
   if (!cover) { var c2 = html.match(/"coverUrl"\s*:\s*"([^"]+)"/); if (c2) cover = c2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var c3 = html.match(/"poster"\s*:\s*"([^"]+)"/); if (c3) cover = c3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var c4 = html.match(/"cover"\s*:\s*"([^"]+)"/); if (c4) cover = c4[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var c5 = html.match(/"thumbnail"\s*:\s*"([^"]+)"/); if (c5) cover = c5[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var c6 = html.match(/"thumb"\s*:\s*"([^"]+)"/); if (c6) cover = c6[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var upic = html.match(/https?:\/\/[^"']*yximgs\.com\/upic\/[^"']+\.jpg[^"']*/i); if (upic) cover = upic[0].replace(/&amp;/g, '&'); }
-
   if (!title) {
     var tMatch = html.match(/"caption"\s*:\s*"([^"]+)"/);
     if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
     if (tMatch) title = tMatch[1];
   }
 
-  // ===== __NEXT_DATA__ 结构化深度搜索作者 =====（精准定位，跳过评论/音乐/推荐节点）
   var jsonMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (jsonMatch) {
     try {
       var nd = JSON.parse(jsonMatch[1].replace(/undefined/g, 'null'));
       function deepFindAuthorInJSON(obj, depth) {
         if (!obj || typeof obj !== 'object' || depth > 15) return null;
-        var author = validAuthor(obj);
-        if (author) return author;
+        var found = validAuthor(obj);
+        if (found) return found;
         if (obj.photo && obj.photo.user) { var r = validAuthor(obj.photo.user); if (r) return r; }
         if (obj.photoAuthor) { var r = validAuthor(obj.photoAuthor); if (r) return r; }
         if (obj.author && obj.photoId) { var r = validAuthor(obj.author); if (r) return r; }
@@ -316,38 +311,28 @@ async function parseKuaishou(originalUrl) {
         }
         return null;
       }
-      var found = deepFindAuthorInJSON(nd, 0);
-      if (found) { authorId = found.id; authorName = found.name; authorAvatar = found.avatar; }
+      var user = deepFindAuthorInJSON(nd, 0);
+      if (user) { authorId = user.id; authorName = user.name; authorAvatar = user.avatar; }
     } catch (e) {}
   }
 
-  // ===== 兜底：已有数字ID的情况下补名字 =====（不做全局昵称扫描，避免串号）
   if (!authorName && authorId) {
     var ogA = html.match(/<meta[^>]*name="author"[^>]*content="([^"]+)"/);
     if (ogA && isValidName(ogA[1])) authorName = ogA[1];
   }
-
-  // ===== 头像兜底 =====（保留原有各字段扫描）
   if (!authorAvatar && authorId) {
-    var avMatch = html.match(/"avatar"\s*:\s*"([^"]+)"/);
-    if (avMatch) authorAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-    if (!authorAvatar) { var av2 = html.match(/"headUrl"\s*:\s*"([^"]+)"/); if (av2) authorAvatar = av2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!authorAvatar) { var av3 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (av3) authorAvatar = av3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+    var av1 = html.match(/"avatar"\s*:\s*"([^"]+)"/);
+    if (av1) authorAvatar = av1[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+    if (!authorAvatar) { var a2 = html.match(/"headUrl"\s*:\s*"([^"]+)"/); if (a2) authorAvatar = a2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+    if (!authorAvatar) { var a3 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (a3) authorAvatar = a3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
     if (authorAvatar && authorAvatar.indexOf('http://') === 0) authorAvatar = 'https://' + authorAvatar.substring(7);
   }
-
   if (!isValidUid(authorId)) { authorId = ''; authorName = ''; authorAvatar = ''; }
   if (!videoUrl && !cover) return fail('未提取到快手视频地址');
-
-  return ok('kuaishou', {
-    type: 'video', title: title || '', desc: title || '',
-    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-    cover: cover || '', url: videoUrl || '', images: [],
-  });
+  return ok('kuaishou', { type:'video', title:title||'', desc:title||'', author:{name:authorName||'', id:authorId||'', avatar:authorAvatar||''}, cover:cover||'', url:videoUrl||'', images:[] });
 }
 
-
-// ===== 小红书=====
+// ===== 小红书 =====
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
@@ -399,7 +384,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!authorId && note.user) authorId = note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (candidates.length) { var best = candidates[candidates.length - 1]; videoUrl = best.masterUrl || best.url || (best.backupUrls && best.backupUrls[0]) || ''; }
+                  if (candidates.length) { for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
                 if (note.imageList && note.imageList.length) {
                   note.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
@@ -432,7 +417,7 @@ async function parseXiaohongshu(originalUrl) {
                 if (!cover) cover = note.cover && (note.cover.url_default || note.cover.url) || '';
                 if (!videoUrl && note.video && note.video.media && note.video.media.stream) {
                   var c = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (c.length) { var best = c[c.length - 1]; videoUrl = best.masterUrl || best.url || (best.backupUrls && best.backupUrls[0]) || ''; }
+                  if (c.length) { for (var ci = 0; ci < c.length; ci++) { var cdd = c[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
                 if (!images.length && note.image_list && note.image_list.length) {
                   note.image_list.forEach(function(img) { images.push(img.url_default || img.url || ''); });
@@ -445,50 +430,41 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  // masterUrl 正则兜底
+  // masterUrl regex fallback (only _309/_258 watermark-free)
   if (!videoUrl && !images.length) {
-    var muMatch = html.match(/"masterUrl"\s*:\s*"([^"]+)"/);
-    if (muMatch) {
-      videoUrl = muMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-      if (videoUrl.indexOf('http://') === 0) videoUrl = 'https://' + videoUrl.substring(7);
+    var muRegex = /"masterUrl"\s*:\s*"([^"]+)"/g;
+    var muMatch;
+    var bestUrl = '';
+    while ((muMatch = muRegex.exec(html)) !== null) {
+      var mu = muMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+      if (mu.indexOf('http://') === 0) mu = 'https://' + mu.substring(7);
+      if (mu.indexOf('_309') > 0) { bestUrl = mu; break; }
+      if (mu.indexOf('_258') > 0 && !bestUrl) bestUrl = mu;
     }
-    if (!videoUrl) {
-      var buMatch = html.match(/"backupUrls"\s*:\s*\["([^"]+)"/);
-      if (buMatch) {
-        videoUrl = buMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-        if (videoUrl.indexOf('http://') === 0) videoUrl = 'https://' + videoUrl.substring(7);
-      }
-    }
+    if (bestUrl) videoUrl = bestUrl;
   }
 
-    // 从原始HTML中搜索xhscdn stream 直链（优先sns-video-zl 无watermark 节点)
+  // xhscdn stream direct URL search (only sns-video-zl/sns-video-hw)
   if (!videoUrl && !images.length) {
-    // 先搜 sns-video-zl（无 watermark)
     var zlMatch = html.match(/https?:\/\/[^"'\s]*sns-video-zl\.xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
-    // 再搜其他 xhscdn 节点
-    var anyStream = zlMatch || html.match(/https?:\/\/[^"'\s]*xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
-    if (anyStream) {
-      videoUrl = anyStream[0].replace(/&amp;/g, '&').replace(/\\u002F/g, '/');
+    if (zlMatch) {
+      videoUrl = zlMatch[0].replace(/&amp;/g, '&').replace(/\\u002F/g, '/');
       if (videoUrl.indexOf('http://') === 0) videoUrl = 'https://' + videoUrl.substring(7);
     }
     if (!videoUrl) {
       var allUrls = html.match(/https?:\/\/[^"']*xhscdn\.com\/stream\/[^"'\s]+/g);
       if (allUrls && allUrls.length) {
-        // 优先选sns-video-zl
-        var best = '';
         for (var si = 0; si < allUrls.length; si++) {
           var su = allUrls[si].replace(/\\u002F/g, '/');
           if (su.indexOf('http://') === 0) su = 'https://' + su.substring(7);
           if (su.match(/\.mp4/i)) {
-            if (su.indexOf('sns-video-zl') > 0) { videoUrl = su; break; }
-            if (!best) best = su;
+            if (su.indexOf('sns-video-zl') > 0 || su.indexOf('sns-video-hw') > 0) { videoUrl = su; break; }
           }
         }
-        if (!videoUrl) videoUrl = best;
       }
     }
   }
-  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容);
+  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
 
   return ok('xiaohongshu', {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
@@ -504,7 +480,7 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // TikTok 页面里第一个用户是分享者当前登录用户，最后一个才是视频原作者
+  // TikTok 页面里第一个用户是分享者/当前登录用户，最后一个才是视频原作者
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
@@ -524,7 +500,7 @@ async function parseTiktok(originalUrl) {
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
-  // tikwm.com 兜底（解决非浏览器请求403 问题
+  // tikwm.com 兜底（解决非浏览器请求 403 问题）
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -558,7 +534,7 @@ async function parseXigua(originalUrl) {
 
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
 
-  // og:title / og:image
+  // og:title / og:image（西瓜视频用 name= 而不是 property=）
   var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
   if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
   var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
@@ -576,15 +552,10 @@ async function parseXigua(originalUrl) {
     if (idM) authorId = idM[1];
   }
 
-    // ALAPI paid API - POST + form-urlencoded
+  // ALAPI paid API
   try {
-    var alapiBody = new URLSearchParams();
-    alapiBody.set('token', 'earvoy1f8sopbwnqftgdzszla3swvm');
-    alapiBody.set('url', originalUrl);
-    var alapiRes = await fetch('https://v3.alapi.cn/api/video/url', {
-      method: 'POST',
-      headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: alapiBody.toString(),
+    var alapiRes = await fetch('https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(originalUrl) + '&format=json', {
+      headers: { 'User-Agent': UA, 'Content-Type': 'application/json', 'Accept': 'application/json' },
     });
     if (alapiRes.ok) {
       var alapi = await alapiRes.json();
@@ -596,54 +567,23 @@ async function parseXigua(originalUrl) {
     }
   } catch(e) {}
 
-  // ALAPI GET - original URL
-  if (!videoUrl) {
-    try {
-      var alapiRes2 = await fetch('https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(originalUrl), {
-        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-      });
-      if (alapiRes2.ok) {
-        var alapi2 = await alapiRes2.json();
-        if (alapi2.code === 200 && alapi2.data && alapi2.data.video_url) {
-          if (!videoUrl) videoUrl = alapi2.data.video_url;
-          if (!title && alapi2.data.title) title = alapi2.data.title;
-          if (!cover && alapi2.data.cover_url) cover = alapi2.data.cover_url;
-        }
-      }
-    } catch(e) {}
-  }
-
-  // ALAPI GET - real URL (after redirect)
-  if (!videoUrl) {
-    try {
-      var alapiRes3 = await fetch('https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(realUrl), {
-        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-      });
-      if (alapiRes3.ok) {
-        var alapi3 = await alapiRes3.json();
-        if (alapi3.code === 200 && alapi3.data && alapi3.data.video_url) {
-          if (!videoUrl) videoUrl = alapi3.data.video_url;
-          if (!title && alapi3.data.title) title = alapi3.data.title;
-          if (!cover && alapi3.data.cover_url) cover = alapi3.data.cover_url;
-        }
-      }
-    } catch(e) {}
-  }
-
-// HTML fallback
+  // HTML fallback
   if (!videoUrl) {
     var patterns = [/\x22srcUrl\x22\s*:\s*\x22([^\x22]+)\x22/, /\x22videoUrl\x22\s*:\s*\x22([^\x22]+)\x22/, /\x22play_url\x22\s*:\s*\x22([^\x22]+)\x22/];
     for (var pi = 0; pi < patterns.length; pi++) { var vm = html.match(patterns[pi]); if (vm) { videoUrl = vm[1].replace(/\\u002F/g, '/'); break; } }
   }
 
-  if (!title && !cover && !videoUrl) return fail('未提取到西瓜视频信息');
+  if (!title && !cover && !videoUrl) return fail('xigua parse failed');
 
   return ok('ixigua', {
     type: 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
     cover: cover || '', url: videoUrl || '', images: [],
   });
-}async function parseAcfun(originalUrl) {
+}
+
+// ===== A站 =====
+async function parseAcfun(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.acfun.cn/' });
 
@@ -675,7 +615,7 @@ async function parseXigua(originalUrl) {
     } catch(e) {}
   }
 
-  // 解析 var playInfo（视频流地址)
+  // 解析 var playInfo（视频流地址）
   var piStart = html.indexOf('var playInfo =');
   if (piStart >= 0) {
     var ps = piStart + 'var playInfo ='.length;
@@ -704,7 +644,7 @@ async function parseXigua(originalUrl) {
     } catch(e) {}
   }
 
-  // 从HTML 中提取作者信息 // 从HTML 中提取作者信息
+  // 从 HTML 中提取作者信息  // 从 HTML 中提取作者信息
   var nameMatch = html.match(/<span\s+class="up-name">([^<]+)<\/span>/);
   if (nameMatch) authorName = nameMatch[1].trim();
   var avatarMatch = html.match(/<span class="up-avatar"><img src="([^"]+)"/);
@@ -723,9 +663,9 @@ async function parseXigua(originalUrl) {
 
 // ===== 微博 =====
 async function parseWeibo(originalUrl) {
-  // 直接通过 BUGPK 代理解析（CF Worker IP 无法获取微博视频数据)
+  // 直接通过 BUGPK 代理解析（CF Worker IP 无法获取微博视频数据）
   try {
-    var res = await fetch('https://api520.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
+    var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
     });
     if (res.ok) {
@@ -742,11 +682,11 @@ async function parseWeibo(originalUrl) {
   } catch(e) {}
 
   return fail('微博解析失败（BUGPK 代理）');
-}// ===== 微信视频号=====
+}// ===== 微信视频号 =====
 async function parseWeixin(originalUrl) {
-  // 页面是SPA，CF Worker 无法直接解析，通过 BUGPK 代理
+  // 页面是 SPA，CF Worker 无法直接解析，通过 BUGPK 代理
   try {
-    var res = await fetch('https://api520.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
+    var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
     });
     if (res.ok) {
@@ -764,6 +704,7 @@ async function parseWeixin(originalUrl) {
 
   return fail('微信视频号解析失败（BUGPK 代理）');
 }
+
 
 
 // Vercel handler
