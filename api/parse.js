@@ -316,6 +316,21 @@ async function parseKuaishou(originalUrl) {
     } catch (e) {}
   }
 
+  // ===== window.INIT_STATE 兜底（快手新版页面无 __NEXT_DATA__） =====
+  if (!authorId) {
+    var initMatch = html.match(/window\.INIT_STATE\s*=\s*(\{[\s\S]*?\});/);
+    if (initMatch) {
+      try {
+        var initRaw = initMatch[1].replace(/\\u002F/g, "/").replace(/\\u003E/g, ">").replace(/\\u003C/g, "<");
+        var photoMatch = initRaw.match(/"userId"\s*:\s*(\d+)[\s\S]{0,300}?"userName"\s*:\s*"([^"]+)"/);
+        if (photoMatch && isValidUid(photoMatch[1]) && isValidName(photoMatch[2])) {
+          authorId = photoMatch[1];
+          authorName = photoMatch[2];
+        }
+      } catch (e) {}
+    }
+  }
+
   if (!authorName && authorId) {
     var ogA = html.match(/<meta[^>]*name="author"[^>]*content="([^"]+)"/);
     if (ogA && isValidName(ogA[1])) authorName = ogA[1];
