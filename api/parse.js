@@ -347,12 +347,12 @@ async function parseKuaishou(originalUrl) {
       }
     }
     if (!authorAvatar && authorId) {
-    var avMatch = html.match(/"avatar"\s*:\s*"([^"]+)"/);
-    if (avMatch) authorAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-    if (!authorAvatar) { var av2 = html.match(/"headUrl"\s*:\s*"([^"]+)"/); if (av2) authorAvatar = av2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!authorAvatar) { var av3 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (av3) authorAvatar = av3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (authorAvatar && authorAvatar.indexOf('http://') === 0) authorAvatar = 'https://' + authorAvatar.substring(7);
-  }
+      var avMatch = html.match(/"avatar"\s*:\s*"([^"]+)"/);
+      if (avMatch) authorAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+      if (!authorAvatar) { var av2 = html.match(/"headUrl"\s*:\s*"([^"]+)"/); if (av2) authorAvatar = av2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+      if (!authorAvatar) { var av3 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (av3) authorAvatar = av3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+      if (authorAvatar && authorAvatar.indexOf('http://') === 0) authorAvatar = 'https://' + authorAvatar.substring(7);
+    }
   }
   // 若本地解析有 ID 但没名字，调 BUGPK 补充
   if (authorId && !authorName && isValidUid(authorId)) {
@@ -536,7 +536,7 @@ async function parseXiaohongshu(originalUrl) {
       }
     }
   }
-  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容);
+  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
 
   return ok('xiaohongshu', {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
@@ -814,8 +814,9 @@ async function parseWeixin(originalUrl) {
 }
 
 
-// Vercel handler
+// Vercel Serverless Function handler
 module.exports = async (req, res) => {
+  // CORS（含预检请求）
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -830,7 +831,26 @@ module.exports = async (req, res) => {
   try {
     const url = new URL(req.url, 'https://' + (req.headers.host || 'localhost'));
     const targetUrl = url.searchParams.get('url') || '';
-    if (!targetUrl) { res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'missing url' })); return; }
+
+    // === TikTok /proxy 代理下载 ===
+    const action = url.searchParams.get('action');
+    if (action === 'proxy') {
+      const videoUrl = url.searchParams.get('video');
+      if (!videoUrl) { res.statusCode = 400; res.end(JSON.stringify(fail('缺少 video 参数'))); return; }
+      const proxyRes = await fetch(videoUrl, {
+        headers: { 'User-Agent': UA, 'Referer': 'https://www.tiktok.com/', 'Origin': 'https://www.tiktok.com' },
+      });
+      if (!proxyRes.ok) { res.statusCode = 502; res.end(JSON.stringify(fail('代理下载失败: HTTP ' + proxyRes.status))); return; }
+      res.setHeader('Content-Type', proxyRes.headers.get('Content-Type') || 'video/mp4');
+      res.setHeader('Content-Disposition', proxyRes.headers.get('Content-Disposition') || 'inline');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.statusCode = 200;
+      const buf = Buffer.from(await proxyRes.arrayBuffer());
+      res.end(buf);
+      return;
+    }
+
+    if (!targetUrl) { res.statusCode = 400; res.end(JSON.stringify(fail('缺少 url 参数', 400))); return; }
 
     const platform = detectPlatform(targetUrl);
     let result;
@@ -844,12 +864,12 @@ module.exports = async (req, res) => {
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
-      default: res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'unsupported' })); return;
+      default: res.statusCode = 400; res.end(JSON.stringify(fail('暂不支持该平台链接', 400))); return;
     }
     res.statusCode = 200;
     res.end(JSON.stringify(result));
   } catch (e) {
     res.statusCode = 500;
-    res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
+    res.end(JSON.stringify(fail('解析失败: ' + (e && e.message ? e.message : String(e)))));
   }
 };
