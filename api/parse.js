@@ -1,8 +1,21 @@
 const UA = 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 const UA_WECHAT = 'Mozilla/5.0 (Linux; Android 12; Pixel 6 Build/SQ3A.220705.003.A1) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/107.0.5304.141 Mobile Safari/537.36 XWEB/5060 MMWEBSDK/20221206 MMWEBID/8060 MicroMessenger/8.0.32.2380(0x28002034) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64';
 
+// 平台中文名称映射
+const PLATFORM_NAMES = {
+  douyin: '抖音',
+  tiktok: 'TikTok',
+  bilibili: 'B站',
+  acfun: 'AcFun',
+  ixigua: '西瓜视频',
+  kuaishou: '快手',
+  xiaohongshu: '小红书',
+  weibo: '微博',
+  weixin: '微信视频号'
+};
+
 function ok(platform, data) {
-  return { code: 200, msg: '解析成功', platform, data };
+  return { code: 200, msg: '解析成功', platform, platformName: PLATFORM_NAMES[platform] || platform, data };
 }
 function fail(msg, code = 500) {
   return { code, msg };
