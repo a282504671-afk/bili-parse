@@ -353,6 +353,7 @@ async function parseKuaishou(originalUrl) {
     if (!authorAvatar) { var av3 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (av3) authorAvatar = av3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
     if (authorAvatar && authorAvatar.indexOf('http://') === 0) authorAvatar = 'https://' + authorAvatar.substring(7);
   }
+  }
   // 若本地解析有 ID 但没名字，调 BUGPK 补充
   if (authorId && !authorName && isValidUid(authorId)) {
     try {
@@ -813,74 +814,24 @@ async function parseWeixin(originalUrl) {
 }
 
 
-// module.exports version below
-  event.respondWith(handleRequest(event.request));
-});
-
-async function handleRequest(request) {
-const url = new URL(request.url);
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Content-Type': 'application/json; charset=utf-8',
-  };
-
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers });
-  }
-
-  const targetUrl = url.searchParams.get('url');
-  if (!targetUrl) {
-    return new Response(JSON.stringify(fail('缺少 url 参数', 400)), { status: 400, headers });
-  }
-
-  try {
-    // === TikTok /proxy 代理下载 ===
-    var action = url.searchParams.get('action');
-    if (action === 'proxy') {
-      var videoUrl = url.searchParams.get('video');
-      if (!videoUrl) return new Response(JSON.stringify(fail('缺少 video 参数')), { status: 400, headers });
-      var proxyRes = await fetch(videoUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', 'Referer': 'https://www.tiktok.com/', 'Origin': 'https://www.tiktok.com' },
-      });
-      if (!proxyRes.ok) return new Response(JSON.stringify(fail('代理下载失败: HTTP ' + proxyRes.status)), { status: 502, headers });
-      var proxyHeaders = new Headers({
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': proxyRes.headers.get('Content-Type') || 'video/mp4',
-        'Content-Disposition': proxyRes.headers.get('Content-Disposition') || 'inline',
-        'Cache-Control': 'public, max-age=3600',
-      });
-      return new Response(proxyRes.body, { status: 200, headers: proxyHeaders });
-    }
-
-    const platform = detectPlatform(targetUrl);
-    let result;
-    switch (platform) {
-      case 'douyin': result = await parseDouyin(targetUrl); break;
-      case 'bilibili': result = await parseBilibili(targetUrl); break;
-      case 'kuaishou': result = await parseKuaishou(targetUrl); break;
-      case 'xiaohongshu': result = await parseXiaohongshu(targetUrl); break;
-      case 'tiktok': result = await parseTiktok(targetUrl); break;
-      case 'ixigua': result = await parseXigua(targetUrl); break;
-      case 'acfun': result = await parseAcfun(targetUrl); break;
-      case 'weibo': result = await parseWeibo(targetUrl); break;
-      case 'weixin': result = await parseWeixin(targetUrl); break;
-      default: return new Response(JSON.stringify(fail('暂不支持该平台链接', 400)), { status: 400, headers });
-    }
-    return new Response(JSON.stringify(result), { status: 200, headers });
-  } catch (e) {
-    return new Response(JSON.stringify(fail('解析失败: ' + (e && e.message ? e.message : String(e)))), { status: 500, headers });
-  }
-}
-
-
 // Vercel handler
 module.exports = async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 200;
+    res.end();
+    return;
+  }
+
   try {
-    const url = new URL(req.url, "https://" + (req.headers.host || 'localhost'));
+    const url = new URL(req.url, 'https://' + (req.headers.host || 'localhost'));
     const targetUrl = url.searchParams.get('url') || '';
-    if (!targetUrl) { res.status(400).json({ code: 400, msg: '缺少url' }); return; }
-    
+    if (!targetUrl) { res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'missing url' })); return; }
+
     const platform = detectPlatform(targetUrl);
     let result;
     switch (platform) {
@@ -893,10 +844,12 @@ module.exports = async (req, res) => {
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
-      default: res.status(400).json({ code: 400, msg: '暂不支持' }); return;
+      default: res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'unsupported' })); return;
     }
-    res.json(result);
-  } catch(e) {
-    res.status(500).json({ code: 500, msg: '解析失败: ' + (e.message || String(e)) });
+    res.statusCode = 200;
+    res.end(JSON.stringify(result));
+  } catch (e) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
