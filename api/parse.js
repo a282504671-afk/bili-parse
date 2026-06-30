@@ -873,10 +873,14 @@ const url = new URL(request.url);
   }
 }
 
-
-
-
-
-
-
-
+// Vercel handler: wrap handleRequest to convert Node req -> Web Request
+module.exports = async (req, res) => {
+  const url = new URL(req.url, "https://" + (req.headers.host || 'localhost'));
+  const webReq = new Request(url, {
+    method: req.method,
+    headers: req.headers,
+  });
+  const webRes = await handleRequest(webReq);
+  const body = await webRes.text();
+  res.status(webRes.status).send(body);
+};
