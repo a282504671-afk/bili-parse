@@ -127,14 +127,14 @@ async function parseBilibili(originalUrl) {
   var bvMatch = realUrl.match(/BV[0-9A-Za-z]+/);
   if (!bvMatch) {
     var avMatch = realUrl.match(/av(\d+)/i);
-    if (!avMatch) return fail('未识别到BV号');
+    if (!avMatch) return fail('未识别到BV号);
     bvMatch = { 0: avMatch[0] };
   }
   var bvid = bvMatch[0];
   var info = null;
   var videoUrl = '';
 
-  // 方式1: 直连 B站 API（跳过页面 HTML 抓取，CF Worker IP 经常被页面封）
+  // 方式1: 直连 B站API（跳过页面 HTML 抓取，CF Worker IP 经常被页面封锁
   try {
     var vr = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
       headers: { 'User-Agent': UA, 'Referer': 'https://www.bilibili.com/', 'Accept': 'application/json' },
@@ -152,10 +152,10 @@ async function parseBilibili(originalUrl) {
     }
   } catch(e) {}
 
-  // 方式2: 直连失败 → 通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK，用户家庭 IP 不可见）
+  // 方式2: 直连失败 ，通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK，用户家庭IP 不可见）
   if (!info || !videoUrl) {
     try {
-      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
+      var bpRes = await fetch('https://api520.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
         headers: { 'User-Agent': UA, 'Accept': 'application/json' },
       });
       if (bpRes.ok) {
@@ -202,7 +202,7 @@ async function parseBilibili(originalUrl) {
 
   if (!info) return fail('获取B站视频信息失败，可能被海外IP限制');
 
-  // 获取播放地址（仅直连成功时尝试，BUGPK 已自带视频地址）
+  // 获取播放地址（仅直连成功时尝试，BUGPK 已自带视频地址)
   if (!videoUrl && info.cid && info.aid) {
     try {
       var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1', {
@@ -218,7 +218,7 @@ async function parseBilibili(originalUrl) {
       }
     } catch(e) {}
   }
-  // 兜底：如果 mid 为空，尝试单独获取用户 mid
+  // 兜底：如果mid 为空，尝试单独获取用户mid
   if (info && (!info.owner || !info.owner.mid) && bvid) {
     try {
       var midRes = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, {
@@ -252,8 +252,8 @@ async function parseKuaishou(originalUrl) {
 
   // 快手真实用户 ID 始终是纯数字，用于过滤掉抓错的分享码/photoId 等无关字段
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
-  // 抓到的"作者名"如果是这些通用占位词，说明命中的是无关卡片，而不是真实作者
-  var BAD_NAMES = ['小哥哥', '小姐姐', '快手用户', '神秘人', '热门用户'];
+  // 抓到的作者名"如果是这些通用占位词，说明命中的是无关卡片，而不是真实作者
+  var BAD_NAMES = ['小哥哥, '小姐姐, '快手用户', '神秘人, '热门用户'];
   var isValidName = function (v) { return !!v && BAD_NAMES.indexOf(v) === -1; };
 
   var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url=\"([^\"]+)\"/, /data-url=\"([^"']+)\"/];
@@ -278,7 +278,7 @@ async function parseKuaishou(originalUrl) {
   if (!cover) { var c6 = html.match(/"thumb"\s*:\s*"([^"]+)"/); if (c6) cover = c6[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
   if (!cover) { var upic = html.match(/https?:\/\/[^"']*yximgs\.com\/upic\/[^"']+\.jpg[^"']*/i); if (upic) cover = upic[0].replace(/&amp;/g, '&'); }
 
-  // 优先：页面内嵌 __NEXT_DATA__ JSON，按结构化路径取真实作者对象（最可靠，命中即直接信任）
+  // 优先：页面内容__NEXT_DATA__ JSON，按结构化路径取真实作者对象（最可靠，命中即直接信任)
   var jsonMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
   if (jsonMatch) {
     try {
@@ -300,7 +300,7 @@ async function parseKuaishou(originalUrl) {
     } catch (e) {}
   }
 
-  // 兜底：松散正则扫描页面，但 ID 必须是纯数字、名字不能是占位词，否则丢弃，避免抓错
+  // 兜底：松散正则扫描页面，的ID 必须是纯数字、名字不能是占位词，否则丢弃，避免抓错
   if (!authorId) {
     var idMatch = html.match(/"eid"\s*:\s*"(\d+)"/) || html.match(/"userId"\s*:\s*"?(\d+)"?/) || html.match(/"user_id"\s*:\s*"?(\d+)"?/) || html.match(/"kwaiId"\s*:\s*"?(\d+)"?/);
     if (idMatch && isValidUid(idMatch[1])) authorId = idMatch[1];
@@ -314,7 +314,7 @@ async function parseKuaishou(originalUrl) {
       var ogA = html.match(/<meta[^>]*name="author"[^>]*content="([^"]+)"/);
       if (ogA && isValidName(ogA[1])) authorName = ogA[1];
     }
-    // 有数字 ID 但名字仍为空时，在 __NEXT_DATA__ 深层搜索匹配该 ID 的用户
+    // 有数的ID 但名字仍为空时，在__NEXT_DATA__ 深层搜索匹配的ID 的用户
     if (!authorName && jsonMatch) {
       try {
         var nd2 = JSON.parse(jsonMatch[1].replace(/undefined/g, 'null'));
@@ -346,18 +346,40 @@ async function parseKuaishou(originalUrl) {
         if (nMatch && isValidName(nMatch[1])) authorName = nMatch[1];
       }
     }
-  }
-  if (!authorAvatar && authorId) {
+    if (!authorAvatar && authorId) {
     var avMatch = html.match(/"avatar"\s*:\s*"([^"]+)"/);
     if (avMatch) authorAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
     if (!authorAvatar) { var av2 = html.match(/"headUrl"\s*:\s*"([^"]+)"/); if (av2) authorAvatar = av2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
     if (!authorAvatar) { var av3 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (av3) authorAvatar = av3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
     if (authorAvatar && authorAvatar.indexOf('http://') === 0) authorAvatar = 'https://' + authorAvatar.substring(7);
   }
-  // 若始终没能拿到合法（纯数字）ID，宁可作者信息留空，也不展示抓错的数据
+  // 若本地解析有 ID 但没名字，调 BUGPK 补充
+  if (authorId && !authorName && isValidUid(authorId)) {
+    try {
+      var bpkRes = await fetch('https://api520.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
+        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+      });
+      if (bpkRes.ok) {
+        var bpkJson = await bpkRes.json();
+        if (bpkJson.data && bpkJson.data.author) {
+          var bpkId = String(bpkJson.data.author.id || '');
+          var bpkName = bpkJson.data.author.name || '';
+          // 只拿名字，且的ID 确认是同一个人
+          if (bpkName && bpkId === authorId && isValidName(bpkName)) {
+            authorName = bpkName;
+            if (!authorAvatar && bpkJson.data.author.avatar) {
+              authorAvatar = bpkJson.data.author.avatar;
+            }
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
+  // 若始终没能拿到合法（纯数字）ID，宁可作者信息留空，也不展示抓错的数据错
   if (!isValidUid(authorId)) { authorId = ''; authorName = ''; authorAvatar = ''; }
 
-  // 从 HTML 中找标题（如果 og:title 没拿到）
+  // 从HTML 中找标题（如果og:title 没拿到）
   if (!title) {
     var tMatch = html.match(/"caption"\s*:\s*"([^"]+)"/);
     if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
@@ -372,7 +394,7 @@ async function parseKuaishou(originalUrl) {
     cover: cover || '', url: videoUrl || '', images: [],
   });
 }
-// ===== 小红书 =====
+// ===== 小红书=====
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
@@ -486,9 +508,9 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-    // 从原始HTML中搜索 xhscdn stream 直链（优先 sns-video-zl 无 watermark 节点）
+    // 从原始HTML中搜索xhscdn stream 直链（优先sns-video-zl 无watermark 节点)
   if (!videoUrl && !images.length) {
-    // 先搜 sns-video-zl（无 watermark）
+    // 先搜 sns-video-zl（无 watermark)
     var zlMatch = html.match(/https?:\/\/[^"'\s]*sns-video-zl\.xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
     // 再搜其他 xhscdn 节点
     var anyStream = zlMatch || html.match(/https?:\/\/[^"'\s]*xhscdn\.com\/stream\/[^"'\s]+\.mp4[^"'\s]*/i);
@@ -499,7 +521,7 @@ async function parseXiaohongshu(originalUrl) {
     if (!videoUrl) {
       var allUrls = html.match(/https?:\/\/[^"']*xhscdn\.com\/stream\/[^"'\s]+/g);
       if (allUrls && allUrls.length) {
-        // 优先选 sns-video-zl
+        // 优先选sns-video-zl
         var best = '';
         for (var si = 0; si < allUrls.length; si++) {
           var su = allUrls[si].replace(/\\u002F/g, '/');
@@ -513,7 +535,7 @@ async function parseXiaohongshu(originalUrl) {
       }
     }
   }
-  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
+  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容);
 
   return ok('xiaohongshu', {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
@@ -529,7 +551,7 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // TikTok 页面里第一个用户是分享者/当前登录用户，最后一个才是视频原作者
+  // TikTok 页面里第一个用户是分享者当前登录用户，最后一个才是视频原作者
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
@@ -549,7 +571,7 @@ async function parseTiktok(originalUrl) {
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
-  // tikwm.com 兜底（解决非浏览器请求 403 问题）
+  // tikwm.com 兜底（解决非浏览器请求403 问题
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -583,7 +605,7 @@ async function parseXigua(originalUrl) {
 
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
 
-  // og:title / og:image（西瓜视频用 name= 而不是 property=）
+  // og:title / og:image
   var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
   if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
   var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
@@ -601,19 +623,74 @@ async function parseXigua(originalUrl) {
     if (idM) authorId = idM[1];
   }
 
+    // ALAPI paid API - POST + form-urlencoded
+  try {
+    var alapiBody = new URLSearchParams();
+    alapiBody.set('token', 'earvoy1f8sopbwnqftgdzszla3swvm');
+    alapiBody.set('url', originalUrl);
+    var alapiRes = await fetch('https://v3.alapi.cn/api/video/url', {
+      method: 'POST',
+      headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: alapiBody.toString(),
+    });
+    if (alapiRes.ok) {
+      var alapi = await alapiRes.json();
+      if (alapi.code === 200 && alapi.data && alapi.data.video_url) {
+        if (!videoUrl) videoUrl = alapi.data.video_url;
+        if (!title && alapi.data.title) title = alapi.data.title;
+        if (!cover && alapi.data.cover_url) cover = alapi.data.cover_url;
+      }
+    }
+  } catch(e) {}
 
-  if (!title && !cover && !videoUrl) return fail('未提取到西瓜视频信息');
-if (!title && !cover && !videoUrl) return fail('未提取到西瓜视频信息');
+  // ALAPI GET - original URL
+  if (!videoUrl) {
+    try {
+      var alapiRes2 = await fetch('https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(originalUrl), {
+        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+      });
+      if (alapiRes2.ok) {
+        var alapi2 = await alapiRes2.json();
+        if (alapi2.code === 200 && alapi2.data && alapi2.data.video_url) {
+          if (!videoUrl) videoUrl = alapi2.data.video_url;
+          if (!title && alapi2.data.title) title = alapi2.data.title;
+          if (!cover && alapi2.data.cover_url) cover = alapi2.data.cover_url;
+        }
+      }
+    } catch(e) {}
+  }
+
+  // ALAPI GET - real URL (after redirect)
+  if (!videoUrl) {
+    try {
+      var alapiRes3 = await fetch('https://v3.alapi.cn/api/video/url?token=earvoy1f8sopbwnqftgdzszla3swvm&url=' + encodeURIComponent(realUrl), {
+        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+      });
+      if (alapiRes3.ok) {
+        var alapi3 = await alapiRes3.json();
+        if (alapi3.code === 200 && alapi3.data && alapi3.data.video_url) {
+          if (!videoUrl) videoUrl = alapi3.data.video_url;
+          if (!title && alapi3.data.title) title = alapi3.data.title;
+          if (!cover && alapi3.data.cover_url) cover = alapi3.data.cover_url;
+        }
+      }
+    } catch(e) {}
+  }
+
+// HTML fallback
+  if (!videoUrl) {
+    var patterns = [/\x22srcUrl\x22\s*:\s*\x22([^\x22]+)\x22/, /\x22videoUrl\x22\s*:\s*\x22([^\x22]+)\x22/, /\x22play_url\x22\s*:\s*\x22([^\x22]+)\x22/];
+    for (var pi = 0; pi < patterns.length; pi++) { var vm = html.match(patterns[pi]); if (vm) { videoUrl = vm[1].replace(/\\u002F/g, '/'); break; } }
+  }
+
+  if (!title && !cover && !videoUrl) return fail('未提取到西瓜视频视频信息');
 
   return ok('ixigua', {
     type: 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
     cover: cover || '', url: videoUrl || '', images: [],
   });
-}
-
-// ===== A站 =====
-async function parseAcfun(originalUrl) {
+}async function parseAcfun(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.acfun.cn/' });
 
@@ -621,7 +698,7 @@ async function parseAcfun(originalUrl) {
 
   // 提取 ac id
   var acMatch = realUrl.match(/[?&]ac=(\d+)/);
-  if (!acMatch) return fail('未识别到AC号');
+  if (!acMatch) return fail('未识别到AC号);
 
   // 解析 window.videoInfo
   var viStart = html.indexOf('window.videoInfo =');
@@ -645,7 +722,7 @@ async function parseAcfun(originalUrl) {
     } catch(e) {}
   }
 
-  // 解析 var playInfo（视频流地址）
+  // 解析 var playInfo（视频流地址)
   var piStart = html.indexOf('var playInfo =');
   if (piStart >= 0) {
     var ps = piStart + 'var playInfo ='.length;
@@ -674,7 +751,7 @@ async function parseAcfun(originalUrl) {
     } catch(e) {}
   }
 
-  // 从 HTML 中提取作者信息  // 从 HTML 中提取作者信息
+  // 从HTML 中提取作者信息 // 从HTML 中提取作者信息
   var nameMatch = html.match(/<span\s+class="up-name">([^<]+)<\/span>/);
   if (nameMatch) authorName = nameMatch[1].trim();
   var avatarMatch = html.match(/<span class="up-avatar"><img src="([^"]+)"/);
@@ -682,7 +759,7 @@ async function parseAcfun(originalUrl) {
   var uidMatch = html.match(/\/upPage\/(\d+)/);
   if (uidMatch) authorId = uidMatch[1];
 
-  if (!title && !cover) return fail('未提取到A站视频信息');
+  if (!title && !cover) return fail('未提取到A站视频信息);
 
   return ok('acfun', {
     type: 'video', title: title || '', desc: title || '',
@@ -693,9 +770,9 @@ async function parseAcfun(originalUrl) {
 
 // ===== 微博 =====
 async function parseWeibo(originalUrl) {
-  // 直接通过 BUGPK 代理解析（CF Worker IP 无法获取微博视频数据）
+  // 直接通过 BUGPK 代理解析（CF Worker IP 无法获取微博视频数据)
   try {
-    var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
+    var res = await fetch('https://api520.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
     });
     if (res.ok) {
@@ -711,12 +788,12 @@ async function parseWeibo(originalUrl) {
     }
   } catch(e) {}
 
-  return fail('微博解析失败（BUGPK 代理）');
-}// ===== 微信视频号 =====
+  return fail('微博解析失败（BUGPK 代理));
+}// ===== 微信视频号=====
 async function parseWeixin(originalUrl) {
-  // 页面是 SPA，CF Worker 无法直接解析，通过 BUGPK 代理
+  // 页面是SPA，CF Worker 无法直接解析，通过 BUGPK 代理
   try {
-    var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
+    var res = await fetch('https://api520.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
     });
     if (res.ok) {
@@ -732,40 +809,48 @@ async function parseWeixin(originalUrl) {
     }
   } catch(e) {}
 
-  return fail('微信视频号解析失败（BUGPK 代理）');
+  return fail('微信视频号解析失败（BUGPK 代理));
 }
 
 
-// ===== Vercel Serverless Handler =====
-module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+// module.exports version below
+  event.respondWith(handleRequest(event.request));
+});
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+async function handleRequest(request) {
+const url = new URL(request.url);
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Content-Type': 'application/json; charset=utf-8',
+  };
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 200, headers });
   }
 
-  const targetUrl = req.query.url;
+  const targetUrl = url.searchParams.get('url');
   if (!targetUrl) {
-    return res.status(400).json({ code: 400, msg: '缺少 url 参数' });
+    return new Response(JSON.stringify(fail('缺少 url 参数', 400)), { status: 400, headers });
   }
 
   try {
     // === TikTok /proxy 代理下载 ===
-    var action = req.query.action;
+    var action = url.searchParams.get('action');
     if (action === 'proxy') {
-      var videoUrl = req.query.video;
-      if (!videoUrl) return res.status(400).json({ code: 400, msg: '缺少 video 参数' });
+      var videoUrl = url.searchParams.get('video');
+      if (!videoUrl) return new Response(JSON.stringify(fail('缺少 video 参数')), { status: 400, headers });
       var proxyRes = await fetch(videoUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', 'Referer': 'https://www.tiktok.com/', 'Origin': 'https://www.tiktok.com' },
       });
-      if (!proxyRes.ok) return res.status(502).json({ code: 502, msg: '代理下载失败: HTTP ' + proxyRes.status });
-      var body = await proxyRes.arrayBuffer();
-      res.setHeader('Content-Type', proxyRes.headers.get('Content-Type') || 'video/mp4');
-      res.setHeader('Content-Disposition', proxyRes.headers.get('Content-Disposition') || 'inline');
-      res.setHeader('Cache-Control', 'public, max-age=3600');
-      return res.status(200).send(Buffer.from(body));
+      if (!proxyRes.ok) return new Response(JSON.stringify(fail('代理下载失败: HTTP ' + proxyRes.status)), { status: 502, headers });
+      var proxyHeaders = new Headers({
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': proxyRes.headers.get('Content-Type') || 'video/mp4',
+        'Content-Disposition': proxyRes.headers.get('Content-Disposition') || 'inline',
+        'Cache-Control': 'public, max-age=3600',
+      });
+      return new Response(proxyRes.body, { status: 200, headers: proxyHeaders });
     }
 
     const platform = detectPlatform(targetUrl);
@@ -780,10 +865,18 @@ module.exports = async (req, res) => {
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
-      default: return res.status(400).json({ code: 400, msg: '暂不支持该平台链接' });
+      default: return new Response(JSON.stringify(fail('暂不支持该平台链接, 400)), { status: 400, headers });
     }
-    return res.status(200).json(result);
+    return new Response(JSON.stringify(result), { status: 200, headers });
   } catch (e) {
-    return res.status(500).json({ code: 500, msg: '解析失败: ' + (e && e.message ? e.message : String(e)) });
+    return new Response(JSON.stringify(fail('解析失败: ' + (e && e.message ? e.message : String(e)))), { status: 500, headers });
   }
-};
+}
+
+
+
+
+
+
+
+
