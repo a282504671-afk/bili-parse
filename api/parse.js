@@ -247,11 +247,11 @@ async function parseBilibili(originalUrl) {
 // ===== 快手 =====
 async function parseKuaishou(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
-  var htmlPromise = fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
   var photoIdMatch = realUrl.match(/photoId[=\/](\d+)/);
   var currentPhotoId = photoIdMatch ? photoIdMatch[1] : null;
 
-  var isValidUid = function (v) { return !!v && /^\d{3,}$/.test(String(v)); };
+  var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
 
   // ===== 占位/无效昵称识别 =====
   // 黑名单：快手/上游接口常见的匿名占位昵称
@@ -279,6 +279,13 @@ async function parseKuaishou(originalUrl) {
     } catch (e) { return s; }
   }
 
+  function normalizeUrl(u) {
+    if (!u) return u;
+    u = String(u).replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+    if (u.indexOf('http://') === 0) u = 'https://' + u.substring(7);
+    return u;
+  }
+
   // ===== 严格校验：数字ID + 合法名字 + photoId绑定（防串号） =====
   function validAuthor(user) {
     if (!user || typeof user !== 'object') return null;
@@ -287,7 +294,7 @@ async function parseKuaishou(originalUrl) {
     if (!isValidUid(uid)) return null;
     if (!isValidName(name)) return null;
     if (user.photoId && currentPhotoId && String(user.photoId) !== String(currentPhotoId)) return null;
-    return { id: String(uid), name: name || '', avatar: user.avatar || user.headUrl || user.headerUrl || '' };
+    return { id: String(uid), name: name || '', avatar: normalizeUrl(user.avatar || user.headUrl || user.headerUrl || '') };
   }
 
   // ===== 提取视频信息（保留原全部封面兜底逻辑） =====
@@ -320,14 +327,12 @@ async function parseKuaishou(originalUrl) {
     return { videoUrl: videoUrl || '', title: title || '', cover: cover || '' };
   }
 
-  // ===== HTML轻量提取作者（id + 尝试通过 meta[name=author] 补全昵称） =====
-  function extractFromHtml(html) {
-    var m = html.match(/"user"\s*:\s*\{[\s\S]{0,500}?"id"\s*:\s*"(\d+)"/);
-    if (!m) return null;
-    var name = '';
-    var ogA = html.match(/<meta[^>]*name="author"[^>]*content="([^"]+)"/);
-    if (ogA) name = decodeText(ogA[1]);
-    return { id: m[1], name: name, avatar: '' };
+  // ===== 全文兜底补头像：不管 id/昵称是从哪条路径拿到的，缺头像就再扫一遍 =====
+  function fillAvatarIfMissing(author, html) {
+    if (!author || author.avatar) return author;
+    var av = html.match(/"avatar"\s*:\s*"([^"]+)"/) || html.match(/"headUrl"\s*:\s*"([^"]+)"/) || html.match(/"userAvatar"\s*:\s*"([^"]+)"/) || html.match(/"headerUrl"\s*:\s*"([^"]+)"/);
+    if (av) author.avatar = normalizeUrl(av[1]);
+    return author;
   }
 
   // ===== __NEXT_DATA__ 深度结构化搜索（精准定位，跳过评论/音乐/推荐节点） =====
@@ -348,109 +353,81 @@ async function parseKuaishou(originalUrl) {
     return null;
   }
 
-  // ===== window.INIT_STATE 兜底（快手新版页面无 __NEXT_DATA__ 时使用） =====
+  function findFromNextData(html) {
+    var jsonMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!jsonMatch) return null;
+    try {
+      var nd = JSON.parse(jsonMatch[1].replace(/undefined/g, 'null'));
+      return deepFindAuthorInJSON(nd, 0);
+    } catch (e) { return null; }
+  }
+
+  // ===== window.INIT_STATE 兜底（快手新版页面无 __NEXT_DATA__ 时使用，同步补头像） =====
   function findFromInitState(html) {
     var initMatch = html.match(/window\.INIT_STATE\s*=\s*(\{[\s\S]*?\});/);
     if (!initMatch) return null;
     try {
       var initRaw = initMatch[1].replace(/\\u002F/g, "/").replace(/\\u003E/g, ">").replace(/\\u003C/g, "<");
       var photoMatch = initRaw.match(/"userId"\s*:\s*(\d+)[\s\S]{0,300}?"userName"\s*:\s*"([^"]+)"/);
-      if (photoMatch) return validAuthor({ id: photoMatch[1], name: photoMatch[2] });
+      if (!photoMatch) return null;
+      var avatar = '';
+      var avMatch = initRaw.match(/"avatar"\s*:\s*"([^"]+)"/) || initRaw.match(/"headUrl"\s*:\s*"([^"]+)"/) || initRaw.match(/"userAvatar"\s*:\s*"([^"]+)"/);
+      if (avMatch) avatar = avMatch[1];
+      return validAuthor({ id: photoMatch[1], name: photoMatch[2], avatar: avatar });
     } catch (e) {}
     return null;
   }
 
-  // =========================
-  // ===== 四路并发竞速（最长等待 3.5s，取最高优先级的有效结果） =====
-  // =========================
-  var html = null;
+  // ===== HTML轻量提取作者（id + 尝试通过 meta[name=author] 补全昵称） =====
+  function findFromHtmlMeta(html) {
+    var m = html.match(/"user"\s*:\s*\{[\s\S]{0,500}?"id"\s*:\s*"(\d+)"/);
+    if (!m) return null;
+    var name = '';
+    var ogA = html.match(/<meta[^>]*name="author"[^>]*content="([^"]+)"/);
+    if (ogA) name = decodeText(ogA[1]);
+    return validAuthor({ id: m[1], name: name });
+  }
 
-  var task1 = (async function () {
-    var h = await htmlPromise;
-    html = h;
-    var v = extractVideo(h);
-    var basic = extractFromHtml(h);
-    var author = basic ? validAuthor(basic) : null;
-    return { author: author, videoUrl: v.videoUrl, title: v.title, cover: v.cover };
-  })();
+  var video = extractVideo(html);
+  var finalAuthor = null;
 
-  var task2 = (async function () {
-    var h = html || await htmlPromise;
-    if (!html) html = h;
-    var jsonMatch = h.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-    if (!jsonMatch) return null;
-    try {
-      var nd = JSON.parse(jsonMatch[1].replace(/undefined/g, 'null'));
-      var v = extractVideo(h);
-      var author = deepFindAuthorInJSON(nd, 0);
-      return { author: author, videoUrl: v.videoUrl, title: v.title, cover: v.cover };
-    } catch (e) { return null; }
-  })();
+  // 优先级：本地解析（无额外网络请求，最快最稳）→ 都拿不到时，最后才打一次外部接口兜底
+  finalAuthor = findFromNextData(html);
+  if (!finalAuthor) finalAuthor = findFromInitState(html);
+  if (!finalAuthor) finalAuthor = findFromHtmlMeta(html);
 
-  var task3 = (async function () {
+  if (!finalAuthor || !video.videoUrl) {
     try {
       var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(realUrl), {
         headers: { 'User-Agent': UA }
       });
-      if (!res.ok) return null;
-      var json = await res.json();
-      var d = json && json.data;
-      if (!d) return null;
-      var author = validAuthor({ id: d.author && d.author.id, name: d.author && d.author.name, avatar: d.author && d.author.avatar });
-      return { author: author, videoUrl: d.url, title: d.title, cover: d.cover };
-    } catch (e) { return null; }
-  })();
-
-  var task4 = (async function () {
-    var h = html || await htmlPromise;
-    if (!html) html = h;
-    var author = findFromInitState(h);
-    var v = extractVideo(h);
-    return { author: author, videoUrl: v.videoUrl, title: v.title, cover: v.cover };
-  })();
-
-  // 优先级：__NEXT_DATA__结构化 > INIT_STATE结构化 > REST兜底 > HTML轻量
-  var TIMEOUT_MS = 3500;
-  var withTimeout = function (p) {
-    return Promise.race([
-      p.catch(function () { return null; }),
-      new Promise(function (resolve) { setTimeout(function () { resolve(null); }, TIMEOUT_MS); })
-    ]);
-  };
-  var results = await Promise.all([task2, task4, task3, task1].map(withTimeout));
-
-  var finalAuthor = null, finalData = null;
-  for (var i = 0; i < results.length; i++) {
-    var r = results[i];
-    if (!r) continue;
-    if (!finalData && (r.videoUrl || r.cover)) finalData = r;
-    if (!finalAuthor && r.author) {
-      finalAuthor = r.author;
-      if (!finalData) finalData = r;
-      else {
-        if (!finalData.title && r.title) finalData.title = r.title;
-        if (!finalData.cover && r.cover) finalData.cover = r.cover;
-        if (!finalData.videoUrl && r.videoUrl) finalData.videoUrl = r.videoUrl;
+      if (res.ok) {
+        var json = await res.json();
+        var d = json && json.data;
+        if (d) {
+          if (!finalAuthor) {
+            finalAuthor = validAuthor({ id: d.author && d.author.id, name: d.author && d.author.name, avatar: d.author && d.author.avatar });
+          }
+          if (!video.videoUrl && d.url) video.videoUrl = d.url;
+          if (!video.cover && d.cover) video.cover = d.cover;
+          if (!video.title && d.title) video.title = d.title;
+        }
       }
-    }
+    } catch (e) {}
   }
 
-  // fallback：竞速全失败时，至少返回视频信息
-  if (!finalData) {
-    var h = html || await htmlPromise;
-    var v = extractVideo(h);
-    if (!v.videoUrl && !v.cover) return fail('未提取到快手视频地址');
-    finalData = v;
-  }
-  if (!finalData.videoUrl && !finalData.cover) return fail('未提取到快手视频地址');
+  // 不管走的是哪条路径拿到的作者信息，缺头像就再用全文兜底补一次
+  finalAuthor = fillAvatarIfMissing(finalAuthor, html);
+
+  if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
 
   return ok('kuaishou', {
     type: 'video',
-    title: finalData.title || '',
-    desc: finalData.title || '',
+    title: video.title || '',
+    desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
-    cover: finalData.cover || '',
-    url: finalData.videoUrl || '',
+    cover: video.cover || '',
+    url: video.videoUrl || '',
     images: []
   });
 }
