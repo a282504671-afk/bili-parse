@@ -243,17 +243,20 @@ async function parseBilibili(originalUrl) {
     cover: info.pic || '', url: videoUrl || '', images: [],
   });
 }
+
+
 async function parseKuaishou(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
-  var htmlPromise = fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
-  var photoIdMatch = realUrl.match(/photoId[=\/](\d+)/);
-  var currentPhotoId = photoIdMatch ? photoIdMatch[1] : null;
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
+  var videoUrl = '', title = '', cover = '', authorName = '', authorId = '', authorAvatar = '';
 
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
   var BAD_NAMES = ['快手用户', '神秘人', '热门用户'];
   var isValidName = function (v) { return !!v && BAD_NAMES.indexOf(v) === -1; };
 
-  // ===== 严格校验：数字ID + 合法名字 + photoId绑定（防串号） =====
+  var photoIdMatch = realUrl.match(/photoId[=\/](\d+)/);
+  var currentPhotoId = photoIdMatch ? photoIdMatch[1] : null;
+
   function validAuthor(user) {
     if (!user || typeof user !== 'object') return null;
     var uid = user.id || user.userId || user.eid;
@@ -261,153 +264,89 @@ async function parseKuaishou(originalUrl) {
     if (!isValidUid(uid)) return null;
     if (isValidName(name) === false) return null;
     if (user.photoId && currentPhotoId && String(user.photoId) !== String(currentPhotoId)) return null;
-    return { id: String(uid), name: name || '', avatar: user.avatar || user.headUrl || user.headerUrl || '' };
+    return { id: String(uid), name: name, avatar: user.avatar || user.headUrl || user.headerUrl || '' };
   }
 
-  // ===== 提取视频信息（保留原全部封面兜底逻辑） =====
-  function extractVideo(html) {
-    var videoUrl = '', title = '', cover = '';
-    var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url="([^"]+)"/, /data-url="([^"']+)"/];
-    for (var i = 0; i < patterns.length; i++) {
-      var m = html.match(patterns[i]);
-      if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
-    }
-    var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
-    if (ogT) title = ogT[1];
-    var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
-    if (ogI) cover = ogI[1];
-    var ogV = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]+)"/);
-    if (ogV && !videoUrl) videoUrl = ogV[1];
-    var ogVU = html.match(/<meta[^>]*property="og:video:url"[^>]*content="([^"]+)"/);
-    if (ogVU && !videoUrl) videoUrl = ogVU[1];
-    if (!cover) { var c2 = html.match(/"coverUrl"\s*:\s*"([^"]+)"/); if (c2) cover = c2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c3 = html.match(/"poster"\s*:\s*"([^"]+)"/); if (c3) cover = c3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c4 = html.match(/"cover"\s*:\s*"([^"]+)"/); if (c4) cover = c4[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c5 = html.match(/"thumbnail"\s*:\s*"([^"]+)"/); if (c5) cover = c5[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c6 = html.match(/"thumb"\s*:\s*"([^"]+)"/); if (c6) cover = c6[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var upic = html.match(/https?:\/\/[^"']*yximgs\.com\/upic\/[^"']+\.jpg[^"']*/i); if (upic) cover = upic[0].replace(/&amp;/g, '&'); }
-    if (!title) {
-      var tMatch = html.match(/"caption"\s*:\s*"([^"]+)"/);
-      if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
-      if (tMatch) title = tMatch[1];
-    }
-    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '' };
+  var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url="([^\"]+)"/, /data-url="([^"']+)"/];
+  for (var i = 0; i < patterns.length; i++) {
+    var m = html.match(patterns[i]);
+    if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
   }
 
-  // ===== HTML轻量提取作者（不做全局昵称扫描） =====
-  function extractFromHtml(html) {
-    var m = html.match(/"user"\s*:\s*\{[\s\S]{0,500}?"id"\s*:\s*"(\d+)"/);
-    return m ? { id: m[1], name: '', avatar: '' } : null;
+  var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
+  if (ogT) title = ogT[1];
+  var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
+  if (ogI) cover = ogI[1];
+  var ogV = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]+)"/);
+  if (ogV && !videoUrl) videoUrl = ogV[1];
+  var ogVU = html.match(/<meta[^>]*property="og:video:url"[^>]*content="([^"]+)"/);
+  if (ogVU && !videoUrl) videoUrl = ogVU[1];
+
+  if (!cover) { var c2 = html.match(/"coverUrl"\s*:\s*"([^"]+)"/); if (c2) cover = c2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c3 = html.match(/"poster"\s*:\s*"([^"]+)"/); if (c3) cover = c3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c4 = html.match(/"cover"\s*:\s*"([^"]+)"/); if (c4) cover = c4[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c5 = html.match(/"thumbnail"\s*:\s*"([^"]+)"/); if (c5) cover = c5[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c6 = html.match(/"thumb"\s*:\s*"([^"]+)"/); if (c6) cover = c6[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var upic = html.match(/https?:\/\/[^"']*yximgs\.com\/upic\/[^"']+\.jpg[^"']*/i); if (upic) cover = upic[0].replace(/&amp;/g, '&'); }
+
+  if (!title) {
+    var tMatch = html.match(/"caption"\s*:\s*"([^"]+)"/);
+    if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
+    if (tMatch) title = tMatch[1];
   }
 
-  // ===== __NEXT_DATA__ 深度结构化搜索（精准定位，跳过评论/音乐/推荐节点） =====
-  function deepFindAuthorInJSON(obj, depth) {
-    if (!obj || typeof obj !== 'object' || depth > 15) return null;
-    var author = validAuthor(obj);
-    if (author) return author;
-    if (obj.photo && obj.photo.user) { var r = validAuthor(obj.photo.user); if (r) return r; }
-    if (obj.photoAuthor) { var r = validAuthor(obj.photoAuthor); if (r) return r; }
-    if (obj.author && obj.photoId) { var r = validAuthor(obj.author); if (r) return r; }
-    if (obj.video && obj.video.author) { var r = validAuthor(obj.video.author); if (r) return r; }
-    if (obj.post && obj.post.author) { var r = validAuthor(obj.post.author); if (r) return r; }
-    for (var k in obj) {
-      if (k === 'comment' || k === 'comments' || k === 'music' || k === 'feed' || k === 'related') continue;
-      var r = deepFindAuthorInJSON(obj[k], depth + 1);
-      if (r) return r;
-    }
-    return null;
-  }
-
-  // =========================
-  // ===== 三路竞速 =====
-  // =========================
-  var html = null;
-
-  // 策略1：HTML轻量解析（最快）
-  var task1 = (async function () {
-    var h = await htmlPromise;
-    html = h;
-    var v = extractVideo(h);
-    var author = extractFromHtml(h);
-    return { author: author ? validAuthor(author) : null, videoUrl: v.videoUrl, title: v.title, cover: v.cover };
-  })();
-
-  // 策略2：__NEXT_DATA__ 深度搜索（稳定准确）
-  var task2 = (async function () {
-    var h = html || await htmlPromise;
-    if (!html) html = h;
-    var jsonMatch = h.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-    if (!jsonMatch) return null;
+  // ===== __NEXT_DATA__ 结构化深度搜索作者 =====（精准定位，跳过评论/音乐/推荐节点）
+  var jsonMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (jsonMatch) {
     try {
       var nd = JSON.parse(jsonMatch[1].replace(/undefined/g, 'null'));
-      var v = extractVideo(h);
-      var author = deepFindAuthorInJSON(nd, 0);
-      return { author: author, videoUrl: v.videoUrl, title: v.title, cover: v.cover };
-    } catch (e) { return null; }
-  })();
-
-  // 策略3：REST API 兜底（最准确）
-  var task3 = (async function () {
-    try {
-      var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(realUrl), {
-        headers: { 'User-Agent': UA }
-      });
-      if (!res.ok) return null;
-      var json = await res.json();
-      var d = json && json.data;
-      if (!d) return null;
-      var author = validAuthor({ id: d.author && d.author.id, name: d.author && d.author.name, avatar: d.author && d.author.avatar });
-      return { author: author, videoUrl: d.url, title: d.title, cover: d.cover };
-    } catch (e) { return null; }
-  })();
-
-  // =========================
-  // ===== 竞速核心 =====
-  // =========================
-  var tasks = [task1, task2, task3];
-  var finalAuthor = null;
-  var finalData = null;
-  var TIMEOUT_MS = 2000;
-
-  for (var tIdx = 0; tIdx < tasks.length; tIdx++) {
-    try {
-      var result = await Promise.race([
-        tasks[tIdx],
-        new Promise(function (resolve) { setTimeout(function () { resolve(null); }, TIMEOUT_MS); })
-      ]);
-      if (result && result.author && validAuthor(result.author)) {
-        finalAuthor = result.author;
-        finalData = result;
-        break;
+      function deepFindAuthorInJSON(obj, depth) {
+        if (!obj || typeof obj !== 'object' || depth > 15) return null;
+        var author = validAuthor(obj);
+        if (author) return author;
+        if (obj.photo && obj.photo.user) { var r = validAuthor(obj.photo.user); if (r) return r; }
+        if (obj.photoAuthor) { var r = validAuthor(obj.photoAuthor); if (r) return r; }
+        if (obj.author && obj.photoId) { var r = validAuthor(obj.author); if (r) return r; }
+        if (obj.video && obj.video.author) { var r = validAuthor(obj.video.author); if (r) return r; }
+        if (obj.post && obj.post.author) { var r = validAuthor(obj.post.author); if (r) return r; }
+        for (var k in obj) {
+          if (k === 'comment' || k === 'comments' || k === 'music' || k === 'feed' || k === 'related') continue;
+          var r = deepFindAuthorInJSON(obj[k], depth + 1);
+          if (r) return r;
+        }
+        return null;
       }
-      if (!finalData && result && (result.videoUrl || result.cover)) {
-        finalData = result;
-      }
+      var found = deepFindAuthorInJSON(nd, 0);
+      if (found) { authorId = found.id; authorName = found.name; authorAvatar = found.avatar; }
     } catch (e) {}
   }
 
-  // fallback：竞速全失败时，至少返回视频信息
-  if (!finalData) {
-    var h = html || await htmlPromise;
-    var v = extractVideo(h);
-    if (!v.videoUrl && !v.cover) return fail('未提取到快手视频地址');
-    return ok('kuaishou', {
-      type: 'video', title: v.title, desc: v.title,
-      author: { name: '', id: '', avatar: '' },
-      cover: v.cover, url: v.videoUrl, images: []
-    });
+  // ===== 兜底：已有数字ID的情况下补名字 =====（不做全局昵称扫描，避免串号）
+  if (!authorName && authorId) {
+    var ogA = html.match(/<meta[^>]*name="author"[^>]*content="([^"]+)"/);
+    if (ogA && isValidName(ogA[1])) authorName = ogA[1];
   }
 
+  // ===== 头像兜底 =====（保留原有各字段扫描）
+  if (!authorAvatar && authorId) {
+    var avMatch = html.match(/"avatar"\s*:\s*"([^"]+)"/);
+    if (avMatch) authorAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+    if (!authorAvatar) { var av2 = html.match(/"headUrl"\s*:\s*"([^"]+)"/); if (av2) authorAvatar = av2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+    if (!authorAvatar) { var av3 = html.match(/"userAvatar"\s*:\s*"([^"]+)"/); if (av3) authorAvatar = av3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+    if (authorAvatar && authorAvatar.indexOf('http://') === 0) authorAvatar = 'https://' + authorAvatar.substring(7);
+  }
+
+  if (!isValidUid(authorId)) { authorId = ''; authorName = ''; authorAvatar = ''; }
+  if (!videoUrl && !cover) return fail('未提取到快手视频地址');
+
   return ok('kuaishou', {
-    type: 'video',
-    title: finalData.title || '',
-    desc: finalData.title || '',
-    author: finalAuthor || { name: '', id: '', avatar: '' },
-    cover: finalData.cover || '',
-    url: finalData.videoUrl || '',
-    images: []
+    type: 'video', title: title || '', desc: title || '',
+    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+    cover: cover || '', url: videoUrl || '', images: [],
   });
 }
+
+
 // ===== 小红书=====
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
