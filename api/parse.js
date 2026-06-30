@@ -873,14 +873,30 @@ const url = new URL(request.url);
   }
 }
 
-// Vercel handler: wrap handleRequest to convert Node req -> Web Request
+
+// Vercel handler
 module.exports = async (req, res) => {
-  const url = new URL(req.url, "https://" + (req.headers.host || 'localhost'));
-  const webReq = new Request(url, {
-    method: req.method,
-    headers: req.headers,
-  });
-  const webRes = await handleRequest(webReq);
-  const body = await webRes.text();
-  res.status(webRes.status).send(body);
+  try {
+    const url = new URL(req.url, "https://" + (req.headers.host || 'localhost'));
+    const targetUrl = url.searchParams.get('url') || '';
+    if (!targetUrl) { res.status(400).json({ code: 400, msg: '缺少url' }); return; }
+    
+    const platform = detectPlatform(targetUrl);
+    let result;
+    switch (platform) {
+      case 'douyin': result = await parseDouyin(targetUrl); break;
+      case 'bilibili': result = await parseBilibili(targetUrl); break;
+      case 'kuaishou': result = await parseKuaishou(targetUrl); break;
+      case 'xiaohongshu': result = await parseXiaohongshu(targetUrl); break;
+      case 'tiktok': result = await parseTiktok(targetUrl); break;
+      case 'ixigua': result = await parseXigua(targetUrl); break;
+      case 'acfun': result = await parseAcfun(targetUrl); break;
+      case 'weibo': result = await parseWeibo(targetUrl); break;
+      case 'weixin': result = await parseWeixin(targetUrl); break;
+      default: res.status(400).json({ code: 400, msg: '暂不支持' }); return;
+    }
+    res.json(result);
+  } catch(e) {
+    res.status(500).json({ code: 500, msg: '解析失败: ' + (e.message || String(e)) });
+  }
 };
