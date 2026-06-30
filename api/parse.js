@@ -536,7 +536,7 @@ async function parseXiaohongshu(originalUrl) {
       }
     }
   }
-  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容);
+  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
 
   return ok('xiaohongshu', {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
