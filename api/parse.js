@@ -127,7 +127,7 @@ async function parseBilibili(originalUrl) {
   var bvMatch = realUrl.match(/BV[0-9A-Za-z]+/);
   if (!bvMatch) {
     var avMatch = realUrl.match(/av(\d+)/i);
-    if (!avMatch) return fail('未识别到BV号);
+    if (!avMatch) return fail('未识别到BV号');
     bvMatch = { 0: avMatch[0] };
   }
   var bvid = bvMatch[0];
@@ -683,7 +683,7 @@ async function parseXigua(originalUrl) {
     for (var pi = 0; pi < patterns.length; pi++) { var vm = html.match(patterns[pi]); if (vm) { videoUrl = vm[1].replace(/\\u002F/g, '/'); break; } }
   }
 
-  if (!title && !cover && !videoUrl) return fail('未提取到西瓜视频视频信息');
+  if (!title && !cover && !videoUrl) return fail('未提取到西瓜视频信息');
 
   return ok('ixigua', {
     type: 'video', title: title || '', desc: title || '',
@@ -698,7 +698,7 @@ async function parseXigua(originalUrl) {
 
   // 提取 ac id
   var acMatch = realUrl.match(/[?&]ac=(\d+)/);
-  if (!acMatch) return fail('未识别到AC号);
+  if (!acMatch) return fail('未识别到AC号');
 
   // 解析 window.videoInfo
   var viStart = html.indexOf('window.videoInfo =');
@@ -759,7 +759,7 @@ async function parseXigua(originalUrl) {
   var uidMatch = html.match(/\/upPage\/(\d+)/);
   if (uidMatch) authorId = uidMatch[1];
 
-  if (!title && !cover) return fail('未提取到A站视频信息);
+  if (!title && !cover) return fail('未提取到A站视频信息');
 
   return ok('acfun', {
     type: 'video', title: title || '', desc: title || '',
@@ -788,7 +788,7 @@ async function parseWeibo(originalUrl) {
     }
   } catch(e) {}
 
-  return fail('微博解析失败（BUGPK 代理));
+  return fail('微博解析失败（BUGPK 代理）');
 }// ===== 微信视频号=====
 async function parseWeixin(originalUrl) {
   // 页面是SPA，CF Worker 无法直接解析，通过 BUGPK 代理
@@ -809,7 +809,7 @@ async function parseWeixin(originalUrl) {
     }
   } catch(e) {}
 
-  return fail('微信视频号解析失败（BUGPK 代理));
+  return fail('微信视频号解析失败（BUGPK 代理）');
 }
 
 
@@ -865,7 +865,7 @@ const url = new URL(request.url);
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
-      default: return new Response(JSON.stringify(fail('暂不支持该平台链接, 400)), { status: 400, headers });
+      default: return new Response(JSON.stringify(fail('暂不支持该平台链接', 400)), { status: 400, headers });
     }
     return new Response(JSON.stringify(result), { status: 200, headers });
   } catch (e) {
