@@ -247,7 +247,8 @@ async function parseBilibili(originalUrl) {
 // ===== 快手 =====
 async function parseKuaishou(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
-  var videoUrl = '', title = '', cover = '', authorName = '', authorId = '', authorAvatar = '', html = '';
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
+  var videoUrl = '', title = '', cover = '', authorName = '', authorId = '', authorAvatar = '';
 
   // 快手真实用户 ID 始终是纯数字，用于过滤掉抓错的分享码/photoId 等无关字段
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
@@ -255,33 +256,89 @@ async function parseKuaishou(originalUrl) {
   var BAD_NAMES = ['小哥哥', '小姐姐', '快手用户', '神秘人', '热门用户'];
   var isValidName = function (v) { return !!v && BAD_NAMES.indexOf(v) === -1; };
 
-  // 快手返回的 HTML 不稳定：有时 __NEXT_DATA__ 带完整作者信息，有时是被缓存的精简版，根本没有作者字段。
-  // 不再用宽松正则在整页乱扫昵称（之前会把背景音乐作者、推荐列表里别的账号、甚至请求方自己的账号信息串进来）。
-  // 改为不限次数地重新拉取页面，直到从结构化 JSON 里拿到真正绑定同一个 user 对象的昵称为止。
-  while (!authorName) {
-    html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
+  var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url=\"([^\"]+)\"/, /data-url=\"([^"']+)\"/];
+  for (var i = 0; i < patterns.length; i++) {
+    var m = html.match(patterns[i]);
+    if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
+  }
 
-    if (!videoUrl) {
-      var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url=\"([^\"]+)\"/, /data-url=\"([^"']+)\"/];
-      for (var i = 0; i < patterns.length; i++) {
-        var m = html.match(patterns[i]);
-        if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
+  var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
+  if (ogT) title = ogT[1];
+  var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
+  if (ogI) cover = ogI[1];
+  var ogV = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]+)"/);
+  if (ogV && !videoUrl) videoUrl = ogV[1];
+  var ogVU = html.match(/<meta[^>]*property="og:video:url"[^>]*content="([^"]+)"/);
+  if (ogVU && !videoUrl) videoUrl = ogVU[1];
+
+  if (!cover) { var c2 = html.match(/"coverUrl"\s*:\s*"([^"]+)"/); if (c2) cover = c2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c3 = html.match(/"poster"\s*:\s*"([^"]+)"/); if (c3) cover = c3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c4 = html.match(/"cover"\s*:\s*"([^"]+)"/); if (c4) cover = c4[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c5 = html.match(/"thumbnail"\s*:\s*"([^"]+)"/); if (c5) cover = c5[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var c6 = html.match(/"thumb"\s*:\s*"([^"]+)"/); if (c6) cover = c6[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
+  if (!cover) { var upic = html.match(/https?:\/\/[^"']*yximgs\.com\/upic\/[^"']+\.jpg[^"']*/i); if (upic) cover = upic[0].replace(/&amp;/g, '&'); }
+
+  // 唯一可信来源：页面内嵌 __NEXT_DATA__ JSON，按结构化路径取真实作者对象（id 和 name 绑在同一个 user 上，不会串）。
+  // 只 fetch 一次，拿不到昵称就留空立即返回，不在这里阻塞重试 —— 慢的补昵称逻辑挪到 parseKuaishouAuthor。
+  var jsonMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
+  if (jsonMatch) {
+    try {
+      var nd = JSON.parse(jsonMatch[1].replace(/undefined/g, 'null'));
+      var userInfo = null;
+      if (nd.props && nd.props.pageProps) {
+        var contentInfo = nd.props.pageProps.photoInfo || nd.props.pageProps.videoInfo || nd.props.pageProps.pageData;
+        if (contentInfo && contentInfo.user) userInfo = contentInfo.user;
       }
-    }
+      if (userInfo) {
+        var jName = userInfo.name || userInfo.nickname || '';
+        var jId = userInfo.id || userInfo.eid || userInfo.userId || '';
+        if (isValidUid(jId) && isValidName(jName)) {
+          authorName = jName;
+          authorId = String(jId);
+          authorAvatar = userInfo.avatar || userInfo.headUrl || userInfo.headerUrl || '';
+        }
+      }
+    } catch (e) {}
+  }
 
-    if (!title) { var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/); if (ogT) title = ogT[1]; }
-    if (!cover) { var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/); if (ogI) cover = ogI[1]; }
-    if (!videoUrl) { var ogV = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]+)"/); if (ogV) videoUrl = ogV[1]; }
-    if (!videoUrl) { var ogVU = html.match(/<meta[^>]*property="og:video:url"[^>]*content="([^"]+)"/); if (ogVU) videoUrl = ogVU[1]; }
+  if (!authorId) {
+    var idMatch = html.match(/"eid"\s*:\s*"(\d+)"/) || html.match(/"userId"\s*:\s*"?(\d+)"?/) || html.match(/"user_id"\s*:\s*"?(\d+)"?/) || html.match(/"kwaiId"\s*:\s*"?(\d+)"?/);
+    if (idMatch && isValidUid(idMatch[1])) authorId = idMatch[1];
+  }
 
-    if (!cover) { var c2 = html.match(/"coverUrl"\s*:\s*"([^"]+)"/); if (c2) cover = c2[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c3 = html.match(/"poster"\s*:\s*"([^"]+)"/); if (c3) cover = c3[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c4 = html.match(/"cover"\s*:\s*"([^"]+)"/); if (c4) cover = c4[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c5 = html.match(/"thumbnail"\s*:\s*"([^"]+)"/); if (c5) cover = c5[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var c6 = html.match(/"thumb"\s*:\s*"([^"]+)"/); if (c6) cover = c6[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); }
-    if (!cover) { var upic = html.match(/https?:\/\/[^"']*yximgs\.com\/upic\/[^"']+\.jpg[^"']*/i); if (upic) cover = upic[0].replace(/&amp;/g, '&'); }
+  if (!isValidUid(authorId)) { authorId = ''; authorName = ''; authorAvatar = ''; }
 
-    // 唯一可信来源：页面内嵌 __NEXT_DATA__ JSON，按结构化路径取真实作者对象（id 和 name 绑在同一个 user 上，不会串）
+  if (!title) {
+    var tMatch = html.match(/"caption"\s*:\s*"([^"]+)"/);
+    if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
+    if (tMatch) title = tMatch[1];
+  }
+
+  if (!videoUrl && !cover) return fail('未提取到快手视频地址');
+
+  return ok('kuaishou', {
+    type: 'video', title: title || '', desc: title || '',
+    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+    cover: cover || '', url: videoUrl || '', images: [],
+  });
+}
+
+// 专门补昵称用：主接口没拿到 author.name 时，APP 再单独调用 action=ks_author 触发这里。
+// 这里才做"重试到拿到为止"的慢操作，不会拖慢主下载流程。
+async function parseKuaishouAuthor(originalUrl) {
+  var realUrl = await resolveRedirect(originalUrl);
+  var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
+  var BAD_NAMES = ['小哥哥', '小姐姐', '快手用户', '神秘人', '热门用户'];
+  var isValidName = function (v) { return !!v && BAD_NAMES.indexOf(v) === -1; };
+
+  var authorName = '', authorId = '', authorAvatar = '';
+  var lastHtml = null, attempt = 0;
+  while (!authorName && attempt < 15) {
+    attempt++;
+    var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
+    if (html === lastHtml) break;
+    lastHtml = html;
+
     var jsonMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
     if (jsonMatch) {
       try {
@@ -303,34 +360,11 @@ async function parseKuaishou(originalUrl) {
       } catch (e) {}
     }
 
-    if (!authorId) {
-      var idMatch = html.match(/"eid"\s*:\s*"(\d+)"/) || html.match(/"userId"\s*:\s*"?(\d+)"?/) || html.match(/"user_id"\s*:\s*"?(\d+)"?/) || html.match(/"kwaiId"\s*:\s*"?(\d+)"?/);
-      if (idMatch && isValidUid(idMatch[1])) authorId = idMatch[1];
-    }
-
-    if (!videoUrl && !cover && !jsonMatch) {
-      // 这次抓取基本什么都没拿到（可能是网络/反爬异常），避免死循环纯粹空转，直接放弃这条链接
-      return fail('未提取到快手视频地址');
-    }
+    if (!jsonMatch) break; // 这次连 __NEXT_DATA__ 都没有，链接本身有问题，没必要再试
   }
 
-  // 若始终没能拿到合法（纯数字）ID，宁可作者信息留空，也不展示抓错的数据
-  if (!isValidUid(authorId)) { authorId = ''; authorName = ''; authorAvatar = ''; }
-
-  // 从HTML 中找标题（如果og:title 没拿到）
-  if (!title) {
-    var tMatch = html.match(/"caption"\s*:\s*"([^"]+)"/);
-    if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
-    if (tMatch) title = tMatch[1];
-  }
-
-  if (!videoUrl && !cover) return fail('未提取到快手视频地址');
-
-  return ok('kuaishou', {
-    type: 'video', title: title || '', desc: title || '',
-    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-    cover: cover || '', url: videoUrl || '', images: [],
-  });
+  if (!authorName) return fail('未获取到作者昵称');
+  return ok('kuaishou_author', { name: authorName, id: authorId, avatar: authorAvatar });
 }
 // ===== 小红书=====
 async function parseXiaohongshu(originalUrl) {
@@ -788,6 +822,14 @@ module.exports = async (req, res) => {
     }
 
     if (!targetUrl) { res.statusCode = 400; res.end(JSON.stringify(fail('缺少 url 参数', 400))); return; }
+
+    // === 快手补昵称：主接口 author.name 为空时，APP 单独调这个接口重试获取 ===
+    if (action === 'ks_author') {
+      const authorResult = await parseKuaishouAuthor(targetUrl);
+      res.statusCode = 200;
+      res.end(JSON.stringify(authorResult));
+      return;
+    }
 
     const platform = detectPlatform(targetUrl);
     let result;
