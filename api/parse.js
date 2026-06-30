@@ -253,7 +253,7 @@ async function parseKuaishou(originalUrl) {
   // 快手真实用户 ID 始终是纯数字，用于过滤掉抓错的分享码/photoId 等无关字段
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
   // 抓到的作者名"如果是这些通用占位词，说明命中的是无关卡片，而不是真实作者
-  var BAD_NAMES = ['小哥哥, '小姐姐, '快手用户', '神秘人, '热门用户'];
+  var BAD_NAMES = ['小哥哥', '小姐姐', '快手用户', '神秘人', '热门用户'];
   var isValidName = function (v) { return !!v && BAD_NAMES.indexOf(v) === -1; };
 
   var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url=\"([^\"]+)\"/, /data-url=\"([^"']+)\"/];
