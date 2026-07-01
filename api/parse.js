@@ -820,6 +820,320 @@ async function parseWeixin(originalUrl) {
 
 
 
+
+// ========== 批量获取作者作品列表 ==========
+async function handleListRequest(platform, homepageUrl, cursor) {
+  try {
+    switch (platform) {
+      case 'bilibili': return await listBilibili(homepageUrl, cursor);
+      case 'acfun': return await listAcfun(homepageUrl, cursor);
+      case 'youtube': return await listYoutube(homepageUrl, cursor);
+      case 'douyin': return await listDouyin(homepageUrl, cursor);
+      case 'kuaishou': return await listKuaishou(homepageUrl, cursor);
+      case 'xiaohongshu': return await listXiaohongshu(homepageUrl, cursor);
+      case 'tiktok': return await listTiktok(homepageUrl, cursor);
+      default:
+        return fail('该平台暂不支持批量获取作品: ' + platform, 400);
+    }
+  } catch (e) {
+    return fail('获取作品列表失败: ' + (e && e.message ? e.message : String(e)));
+  }
+}
+
+function listOk(platform, items, hasMore, cursor) {
+  return ok(platform, { items: items, hasMore: !!hasMore, cursor: cursor || '' });
+}
+
+// ---------------- B站（官方接口，把握较大）----------------
+// 主页链接形如 https://space.bilibili.com/12345678
+async function listBilibili(homepageUrl, cursor) {
+  var midMatch = homepageUrl.match(/space\.bilibili\.com\/(\d+)/);
+  if (!midMatch) return fail('无法从链接中提取B站UID');
+  var mid = midMatch[1];
+  var pn = cursor ? parseInt(cursor, 10) : 1;
+  var ps = 30;
+
+  var res = await fetch('https://api.bilibili.com/x/space/wbi/arc/search?mid=' + mid + '&pn=' + pn + '&ps=' + ps + '&order=pubdate', {
+    headers: { 'User-Agent': UA, 'Referer': 'https://space.bilibili.com/' + mid },
+  });
+  var data = await res.json();
+
+  // 如果这里报 -401/-352，说明触发了 wbi 签名校验，需要再补签名逻辑（把这个报错发我）
+  if (data.code !== 0) {
+    return fail('B站接口返回错误(' + data.code + '): ' + data.message + '，可能需要补wbi签名');
+  }
+
+  var vlist = (data.data && data.data.list && data.data.list.vlist) || [];
+  var total = (data.data && data.data.page && data.data.page.count) || 0;
+  var items = vlist.map(function (v) {
+    return {
+      workId: String(v.bvid),
+      title: v.title,
+      cover: v.pic,
+      workUrl: 'https://www.bilibili.com/video/' + v.bvid,
+      publishTime: v.created,
+    };
+  });
+  var hasMore = pn * ps < total;
+  return listOk('bilibili', items, hasMore, hasMore ? String(pn + 1) : '');
+}
+
+// ---------------- AcFun（未实测，接口是按你代码里已出现的 /upPage/{id} 猜的）----------------
+async function listAcfun(homepageUrl, cursor) {
+  var uidMatch = homepageUrl.match(/upPage\/(\d+)/) || homepageUrl.match(/acfun\.cn\/u\/(\d+)/);
+  if (!uidMatch) return fail('无法从链接中提取AcFun用户ID');
+  var userId = uidMatch[1];
+  var pageNo = cursor ? parseInt(cursor, 10) : 1;
+  var pageSize = 20;
+
+  var res = await fetch('https://www.acfun.cn/rest/pc-direct/user/videos?userId=' + userId + '&pageSize=' + pageSize + '&pageNo=' + pageNo, {
+    headers: { 'User-Agent': UA, 'Referer': 'https://www.acfun.cn/upPage/' + userId },
+  });
+  var data = await res.json();
+
+  // 字段名未实测确认，如果拿到的 items 是空但账号确实有作品，把 data 打印出来发我调整字段映射
+  var list = data.videoList || (data.data && data.data.videoList) || [];
+  var items = list.map(function (v) {
+    var acId = v.dougaId || v.contentId || v.id;
+    return {
+      workId: String(acId),
+      title: v.title || '',
+      cover: v.coverUrl || v.cover || '',
+      workUrl: 'https://www.acfun.cn/v/ac' + acId,
+      publishTime: v.createTime ? Math.floor(v.createTime / 1000) : undefined,
+    };
+  });
+  var hasMore = items.length >= pageSize;
+  return listOk('acfun', items, hasMore, hasMore ? String(pageNo + 1) : '');
+}
+
+// ---------------- YouTube（RSS，无需key，但只能拿最新15条，没有分页）----------------
+async function listYoutube(homepageUrl, cursor) {
+  var channelMatch = homepageUrl.match(/channel\/(UC[\w-]+)/);
+  if (!channelMatch) return fail('暂时只支持 /channel/UCxxxx 形式的链接，@handle链接需要你在编辑资料里换成channelId链接');
+  if (cursor) return listOk('youtube', [], false, ''); // RSS只有一页
+
+  var channelId = channelMatch[1];
+  var res = await fetch('https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId);
+  var xml = await res.text();
+
+  var items = [];
+  var entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+  var m;
+  while ((m = entryRegex.exec(xml)) !== null) {
+    var block = m[1];
+    var videoId = (block.match(/<yt:videoId>(.*?)<\/yt:videoId>/) || [])[1];
+    var title = (block.match(/<title>(.*?)<\/title>/) || [])[1];
+    var thumb = (block.match(/url="([^"]+)"/) || [])[1];
+    var published = (block.match(/<published>(.*?)<\/published>/) || [])[1];
+    if (!videoId) continue;
+    items.push({
+      workId: videoId,
+      title: title || '',
+      cover: thumb || '',
+      workUrl: 'https://www.youtube.com/watch?v=' + videoId,
+      publishTime: published ? Math.floor(new Date(published).getTime() / 1000) : undefined,
+    });
+  }
+  return listOk('youtube', items, false, '');
+}
+
+// ---------------- 抖音（HTML内嵌JSON，只能拿首页加载的这一批，翻页需要签名，暂不支持）----------------
+// 思路跟你 extractDouyinDataFromHtml 一样：找 JSON key 定位数组边界再 JSON.parse，
+// 但用户主页的 key 名字我没有真实HTML验证过，很可能不叫 "post":{"list":[...
+// 如果第一批返回空，把主页HTML里 <script id="RENDER_DATA"> 或类似位置的原始JSON发我，我改key名。
+async function listDouyin(homepageUrl, cursor) {
+  if (cursor) return listOk('douyin', [], false, ''); // 暂不支持翻页
+
+  var realUrl = await resolveRedirect(homepageUrl);
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
+
+  var items = [];
+  // 尝试常见 key：aweme_list / post.list，找不到就返回空并提示
+  var keys = ['"awemeList":[', '"aweme_list":[', '"list":['];
+  for (var k = 0; k < keys.length; k++) {
+    var start = html.indexOf(keys[k]);
+    if (start < 0) continue;
+    start += keys[k].length;
+    var depth = 1, inStr = false, escape = false, i = start;
+    for (; i < html.length && depth > 0; i++) {
+      var ch = html[i];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inStr) { escape = true; continue; }
+      if (ch === '"' && !escape) { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === '[') depth++;
+      if (ch === ']') depth--;
+    }
+    try {
+      var arr = JSON.parse('[' + html.substring(start, i - 1) + ']');
+      items = arr.map(function (item) {
+        var video = item.video || {};
+        return {
+          workId: String(item.aweme_id || item.awemeId || ''),
+          title: item.desc || '',
+          cover: (video.cover && video.cover.url_list && video.cover.url_list[0]) || '',
+          workUrl: 'https://www.douyin.com/video/' + (item.aweme_id || item.awemeId || ''),
+          publishTime: item.create_time,
+        };
+      }).filter(function (x) { return x.workId; });
+      break;
+    } catch (e) { /* 继续试下一个key */ }
+  }
+
+  if (!items.length) {
+    return fail('未能从主页HTML中提取作品列表，需要你把主页HTML内嵌JSON结构发我确认key名');
+  }
+  return listOk('douyin', items, false, ''); // 首批之后不支持翻页
+}
+
+// ---------------- 快手（同思路，复用你已有的 window.INIT_STATE 解析套路，仅首页）----------------
+async function listKuaishou(homepageUrl, cursor) {
+  if (cursor) return listOk('kuaishou', [], false, '');
+
+  var realUrl = await resolveRedirect(homepageUrl);
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
+
+  var items = [];
+  var initMatch = html.match(/window\.INIT_STATE\s*=\s*(\{[\s\S]*?\});/);
+  if (initMatch) {
+    try {
+      var raw = initMatch[1].replace(/\\u002F/g, '/');
+      var state = JSON.parse(raw);
+      // key路径未实测确认，常见可能在 state["xxx"].feeds 或 state["xxx"].list，需要你打印真实结构发我
+      var found = deepFindArray(state, ['feeds', 'list', 'photos'], 0);
+      if (found) {
+        items = found.map(function (p) {
+          var photo = p.photo || p;
+          return {
+            workId: String(photo.id || photo.photoId || ''),
+            title: photo.caption || '',
+            cover: photo.coverUrl || '',
+            workUrl: 'https://www.kuaishou.com/short-video/' + (photo.id || photo.photoId || ''),
+            publishTime: photo.timestamp ? Math.floor(photo.timestamp / 1000) : undefined,
+          };
+        }).filter(function (x) { return x.workId; });
+      }
+    } catch (e) {}
+  }
+
+  if (!items.length) {
+    return fail('未能从主页HTML中提取作品列表，需要你把 window.INIT_STATE 真实结构发我确认key名');
+  }
+  return listOk('kuaishou', items, false, '');
+}
+
+// 在对象里深度找第一个命中候选key名且是数组的字段，避免把key名硬编码死路径
+function deepFindArray(obj, candidateKeys, depth) {
+  if (!obj || typeof obj !== 'object' || depth > 8) return null;
+  for (var i = 0; i < candidateKeys.length; i++) {
+    var v = obj[candidateKeys[i]];
+    if (Array.isArray(v) && v.length) return v;
+  }
+  for (var k in obj) {
+    var r = deepFindArray(obj[k], candidateKeys, depth + 1);
+    if (r) return r;
+  }
+  return null;
+}
+
+// ---------------- 小红书（复用 __INITIAL_STATE__ 解析套路，仅首页）----------------
+async function listXiaohongshu(homepageUrl, cursor) {
+  if (cursor) return listOk('xiaohongshu', [], false, '');
+
+  var realUrl = await resolveRedirect(homepageUrl);
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
+
+  var items = [];
+  var stateStart = html.indexOf('__INITIAL_STATE__=');
+  if (stateStart >= 0) {
+    stateStart += '__INITIAL_STATE__='.length;
+    while (stateStart < html.length && (html[stateStart] === ' ' || html[stateStart] === '"')) stateStart++;
+    if (html[stateStart] === '{') {
+      var depth = 1, inStr = false, escape = false, endIdx = stateStart + 1;
+      for (; endIdx < html.length && depth > 0; endIdx++) {
+        var ch = html[endIdx];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inStr) { escape = true; continue; }
+        if (ch === '"' && !escape) { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (ch === '{') depth++;
+        if (ch === '}') depth--;
+      }
+      try {
+        var state = JSON.parse(html.substring(stateStart, endIdx).replace(/undefined/g, 'null'));
+        // 用户主页数据大概率挂在 state.user 下面，具体key未实测，找不到就深度搜索兜底
+        var found = deepFindArray(state, ['notes', 'noteList', 'list'], 0);
+        if (found) {
+          items = found.map(function (n) {
+            var note = n.note || n.noteCard || n;
+            return {
+              workId: String(note.noteId || note.id || ''),
+              title: note.title || note.displayTitle || '',
+              cover: (note.cover && (note.cover.urlDefault || note.cover.url)) || '',
+              workUrl: 'https://www.xiaohongshu.com/explore/' + (note.noteId || note.id || ''),
+              publishTime: note.time ? Math.floor(note.time / 1000) : undefined,
+            };
+          }).filter(function (x) { return x.workId; });
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (!items.length) {
+    return fail('未能从主页HTML中提取作品列表，需要你把 __INITIAL_STATE__ 真实结构发我确认key名');
+  }
+  return listOk('xiaohongshu', items, false, '');
+}
+
+// ---------------- TikTok（__UNIVERSAL_DATA_FOR_REHYDRATION__，仅首页，把握中等）----------------
+async function listTiktok(homepageUrl, cursor) {
+  if (cursor) return listOk('tiktok', [], false, '');
+
+  var realUrl = await resolveRedirect(homepageUrl);
+  var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
+
+  var items = [];
+  var jsonMatch = html.match(/<script[^>]*id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+  if (jsonMatch) {
+    try {
+      var data = JSON.parse(jsonMatch[1]);
+      var found = deepFindArray(data, ['itemList'], 0);
+      if (!found) {
+        // ItemModule 常见是个 {id: item} 的对象而不是数组，兜底转一次
+        var itemModule = deepFindObjectByKey(data, 'ItemModule', 0);
+        if (itemModule) found = Object.values(itemModule);
+      }
+      if (found) {
+        items = found.map(function (item) {
+          return {
+            workId: String(item.id || ''),
+            title: item.desc || '',
+            cover: (item.video && (item.video.cover || item.video.originCover)) || '',
+            workUrl: 'https://www.tiktok.com/@' + ((item.author && item.author.uniqueId) || '') + '/video/' + item.id,
+            publishTime: item.createTime,
+          };
+        }).filter(function (x) { return x.workId; });
+      }
+    } catch (e) {}
+  }
+
+  if (!items.length) {
+    return fail('未能从主页HTML中提取作品列表，需要你把 __UNIVERSAL_DATA_FOR_REHYDRATION__ 真实结构发我确认key名');
+  }
+  return listOk('tiktok', items, false, '');
+}
+
+function deepFindObjectByKey(obj, targetKey, depth) {
+  if (!obj || typeof obj !== 'object' || depth > 10) return null;
+  if (obj[targetKey]) return obj[targetKey];
+  for (var k in obj) {
+    var r = deepFindObjectByKey(obj[k], targetKey, depth + 1);
+    if (r) return r;
+  }
+  return null;
+}
+
 // Vercel handler
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -837,6 +1151,16 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, 'https://' + (req.headers.host || 'localhost'));
     const targetUrl = url.searchParams.get('url') || '';
     if (!targetUrl) { res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'missing url' })); return; }
+
+    var action = url.searchParams.get('action');
+    if (action === 'list') {
+      var listPlatform = url.searchParams.get('platform') || detectPlatform(targetUrl);
+      var cursor = url.searchParams.get('cursor') || '';
+      var listResult = await handleListRequest(listPlatform, targetUrl, cursor);
+      res.statusCode = 200;
+      res.end(JSON.stringify(listResult));
+      return;
+    }
 
     const platform = detectPlatform(targetUrl);
     let result;
