@@ -705,11 +705,20 @@ async function parseXiaohongshu(originalUrl) {
       if (depth === 0) {
         try {
           var state = JSON.parse(html.substring(stateStart, endIdx).replace(/undefined/g, 'null'));
+          // 从 URL 提取 noteId，优先匹配
+          var noteIdFromUrl = (realUrl || originalUrl).match(/\/item\/([a-f0-9]+)/);
           var noteDetail = state.note && state.note.noteDetailMap;
           if (noteDetail) {
             var keys = Object.keys(noteDetail);
-            if (keys.length) {
-              var note = noteDetail[keys[0]] && noteDetail[keys[0]].note;
+            // 优先找 noteId 对应的笔记，避免取到页面里其他笔记的数据
+            var targetKey = null;
+            if (noteIdFromUrl && noteDetail[noteIdFromUrl[1]]) {
+              targetKey = noteIdFromUrl[1];
+            } else if (keys.length) {
+              targetKey = keys[0];
+            }
+            if (targetKey) {
+              var note = noteDetail[targetKey] && noteDetail[targetKey].note;
               if (note) {
                 if (!title) title = note.title || note.desc || '';
                 if (note.user) {
