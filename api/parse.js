@@ -453,6 +453,7 @@ async function parseXiaohongshu(originalUrl) {
 
   // === 1. __INITIAL_STATE__ JSON ===
   var stateStart = html.indexOf('__INITIAL_STATE__=');
+  var noteIsVideoType = false;
   if (stateStart >= 0) {
     stateStart += '__INITIAL_STATE__='.length;
     while (stateStart < html.length && (html[stateStart] === ' ' || html[stateStart] === '"')) stateStart++;
@@ -471,7 +472,6 @@ async function parseXiaohongshu(originalUrl) {
         try {
           var state = JSON.parse(html.substring(stateStart, endIdx).replace(/undefined/g, 'null'));
           var noteIdFromUrl = (realUrl || originalUrl).match(/\/(?:explore|discovery\/)?item\/([a-f0-9]+)/);
-
           var noteData = null;
           if (state.noteData && state.noteData.data && state.noteData.data.noteData) {
             noteData = state.noteData.data.noteData;
@@ -498,8 +498,8 @@ async function parseXiaohongshu(originalUrl) {
               noteData = noteDetail[targetKey] && noteDetail[targetKey].note;
             }
           }
-
           if (noteData) {
+            if (noteData.type === 'video') noteIsVideoType = true;
             if (!title) title = noteData.title || noteData.desc || '';
             if (noteData.user) {
               if (!authorName) authorName = noteData.user.nickname || noteData.user.nickName || noteData.user.name || '';
@@ -510,24 +510,19 @@ async function parseXiaohongshu(originalUrl) {
               }
             }
             if (!cover && noteData.cover) cover = noteData.cover.urlDefault || noteData.cover.url || noteData.cover.urlDefault || '';
-            // 视频：优先 _309，其次 _258，拒绝 _259（有水印）
-            if (!videoUrl && noteData.video && noteData.video.media && noteData.video.media.stream) {
-              var s = noteData.video.media.stream;
-              var tryStreams = (s.h264 || []).concat(s.h265 || []);
-              for (var ti = 0; ti < tryStreams.length; ti++) {
-                var cdd = tryStreams[ti];
-                var allUrls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []);
-                for (var ui = 0; ui < allUrls.length; ui++) {
-                  var u = allUrls[ui];
-                  if (u) {
-                    u = u.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-                    if (u.indexOf('http://') === 0) u = 'https://' + u.substring(7);
-                    if (u.indexOf('_309') > 0) { videoUrl = u; break; }
-                    if (!videoUrl && u.indexOf('_258') > 0) videoUrl = u;
-                  }
-                }
-                if (videoUrl && videoUrl.indexOf('_309') > 0) break;
+            if (!videoUrl && noteData.video) {
+              var candidates = [];
+              if (noteData.video.media && noteData.video.media.stream) {
+                var s = noteData.video.media.stream;
+                (s.h264 || []).forEach(function(x) { candidates.push(x); });
+                (s.h265 || []).forEach(function(x) { candidates.push(x); });
               }
+              if (noteData.video.masterUrl) candidates.push({masterUrl: noteData.video.masterUrl});
+              if (noteData.video.url) candidates.push({masterUrl: noteData.video.url});
+              if (noteData.video.videoUrl) candidates.push({masterUrl: noteData.video.videoUrl});
+              if (noteData.video.playUrl) candidates.push({masterUrl: noteData.video.playUrl});
+              if (noteData.video.play_addr) candidates.push({masterUrl: noteData.video.play_addr});
+              videoUrl = pickBestVideoUrl(candidates);
             }
             if (!images.length && noteData.imageList && noteData.imageList.length) {
               noteData.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
@@ -538,19 +533,21 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  // === 2. DOM 搜 masterUrl（优先 _309，其次 _258，排除 _259） ===
-  if (!videoUrl && !images.length) {
+  // === 2. DOM 搜所有 masterUrl，按质量选最优 ===
+  if (!videoUrl) {
     var muRegex = /"masterUrl"\s*:\s*"([^"]+)"/g;
     var muMatch;
-    var found258 = '';
+    var url309 = '', url258 = '', urlOther = '';
     while ((muMatch = muRegex.exec(html)) !== null) {
       var mu = muMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
       if (mu.indexOf('http://') === 0) mu = 'https://' + mu.substring(7);
-      if (mu.indexOf('_309') > 0) { videoUrl = mu; break; }
-      if (mu.indexOf('_258') > 0 && !found258) found258 = mu;
-      // _259 直接跳过
+      if (mu.indexOf('_309') > 0) { if (!url309) url309 = mu; }
+      else if (mu.indexOf('_258') > 0) { if (!url258) url258 = mu; }
+      else if (!urlOther && mu.indexOf('_259') < 0 && (mu.indexOf('.mp4') > 0 || mu.indexOf('.m3u8') > 0)) { urlOther = mu; }
     }
-    if (!videoUrl && found258) videoUrl = found258;
+    if (url309) videoUrl = url309;
+    else if (url258) videoUrl = url258;
+    else if (urlOther) videoUrl = urlOther;
   }
 
   // === 3. DOM 补标题 + 封面 + 作者 ===
@@ -582,6 +579,25 @@ async function parseXiaohongshu(originalUrl) {
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
     cover: cover || '', url: videoUrl || '', images: images,
   });
+}
+
+// 从候选列表中选最优视频地址
+function pickBestVideoUrl(candidates) {
+  var best309 = '', best258 = '';
+  for (var ti = 0; ti < candidates.length; ti++) {
+    var cdd = candidates[ti];
+    var allUrls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []);
+    for (var ui = 0; ui < allUrls.length; ui++) {
+      var u = allUrls[ui];
+      if (u) {
+        u = u.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+        if (u.indexOf('http://') === 0) u = 'https://' + u.substring(7);
+        if (u.indexOf('_309') > 0 && (u.indexOf('.mp4') > 0 || u.indexOf('.m3u8') > 0)) { if (!best309) best309 = u; }
+        else if (u.indexOf('_258') > 0 && (u.indexOf('.mp4') > 0 || u.indexOf('.m3u8') > 0)) { if (!best258) best258 = u; }
+      }
+    }
+  }
+  return best309 || best258 || '';
 }
 async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
