@@ -712,12 +712,31 @@ async function parseXiaohongshu(originalUrl) {
             var keys = Object.keys(noteDetail);
             // 优先找 noteId 对应的笔记，避免取到页面里其他笔记的数据
             var targetKey = null;
-            if (noteIdFromUrl && noteDetail[noteIdFromUrl[1]]) {
-              targetKey = noteIdFromUrl[1];
-            } else if (keys.length) {
+            if (noteIdFromUrl) {
+              var urlNoteId = noteIdFromUrl[1];
+              // 直接匹配 key
+              if (noteDetail[urlNoteId]) {
+                targetKey = urlNoteId;
+              } else {
+                // key 格式不同时，遍历所有 note 匹配内部 noteId
+                for (var ki = 0; ki < keys.length; ki++) {
+                  var kv = keys[ki];
+                  var innerNote = noteDetail[kv] && noteDetail[kv].note;
+                  if (innerNote) {
+                    var innerId = innerNote.noteId || innerNote.id || innerNote.note_id || '';
+                    if (innerId === urlNoteId || kv.indexOf(urlNoteId) >= 0 || urlNoteId.indexOf(kv) >= 0) {
+                      targetKey = kv;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+            if (!targetKey && keys.length) {
               targetKey = keys[0];
             }
-            if (targetKey) {
+            var noteMatched = false;
+          if (targetKey) {
               var note = noteDetail[targetKey] && noteDetail[targetKey].note;
               if (note) {
                 if (!title) title = note.title || note.desc || '';
@@ -734,8 +753,11 @@ async function parseXiaohongshu(originalUrl) {
                 if (note.imageList && note.imageList.length) {
                   note.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
                 }
+                noteMatched = true;
               }
             }
+            // 没匹配到目标笔记时标记，让后续 edith API 有机会覆盖数据
+            if (!noteMatched && noteIdFromUrl) { authorName = ''; }
           }
         } catch(e) {}
       }
