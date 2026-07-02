@@ -449,72 +449,9 @@ async function parseKuaishou(originalUrl) {
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [];
-
-  // === 1. Edith API ===
-  var noteIdMatch = realUrl.match(/\/(?:explore|item)\/([a-f0-9]+)/);
-  if (noteIdMatch) {
-    var xsecMatch = realUrl.match(/xsec_token=([^&]+)/);
-    if (xsecMatch) {
-      try {
-        var apiRes = await fetch('https://edith.xiaohongshu.com/api/sns/web/v1/feed?note_id=' + noteIdMatch[1] + '&xsec_token=' + xsecMatch[1], {
-          headers: { 'User-Agent': UA, 'Referer': 'https://www.xiaohongshu.com/', 'Accept': 'application/json' },
-        });
-        if (apiRes.ok) {
-          var apiJson = await apiRes.json();
-          if (apiJson.success && apiJson.data && apiJson.data.items && apiJson.data.items.length) {
-            var item = apiJson.data.items[0];
-            var note = item.note_card;
-            if (note) {
-              if (!title) title = note.title || '';
-              var user = note.user || note.user_info || note.userInfo || null;
-              if (user) {
-                if (!authorName) authorName = user.nickname || user.nickName || user.name || '';
-                if (!authorAvatar) authorAvatar = user.avatar || user.avatar_url || user.avatarUrl || user.headUrl || '';
-                if (!authorId) authorId = user.userId || user.user_id || user.id || '';
-              }
-              if (!cover) cover = (note.cover && (note.cover.url_default || note.cover.url || note.cover.urlDefault)) || '';
-              if (!videoUrl && note.video) {
-                var vs = note.video;
-                // 尝试多个可能路径
-                var tryPaths = [];
-                if (vs.media && vs.media.stream) {
-                  var s = vs.media.stream;
-                  (s.h264 || []).forEach(function(x) { tryPaths.push(x); });
-                  (s.h265 || []).forEach(function(x) { tryPaths.push(x); });
-                }
-                // 直接 masterUrl、url、videoUrl
-                if (vs.masterUrl) tryPaths.push({masterUrl: vs.masterUrl});
-                if (vs.url) tryPaths.push({masterUrl: vs.url});
-                if (vs.videoUrl) tryPaths.push({masterUrl: vs.videoUrl});
-                if (vs.playUrl || vs.play_addr) tryPaths.push({masterUrl: vs.playUrl || vs.play_addr});
-                for (var ti = 0; ti < tryPaths.length; ti++) {
-                  var cdd = tryPaths[ti];
-                  var allUrls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []);
-                  for (var ui = 0; ui < allUrls.length; ui++) {
-                    var u = allUrls[ui];
-                    if (u) {
-                      u = u.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-                      if (u.indexOf('http://') === 0) u = 'https://' + u.substring(7);
-                      if (u.indexOf('_309') > 0) { videoUrl = u; break; }
-                      if (!videoUrl && (u.indexOf('.mp4') > 0 || u.indexOf('.m3u8') > 0)) videoUrl = u;
-                    }
-                  }
-                  if (videoUrl && videoUrl.indexOf('_309') > 0) break;
-                }
-              }
-              if (!images.length && note.image_list && note.image_list.length) {
-                note.image_list.forEach(function(img) { images.push(img.url_default || img.url || img.urlDefault || ''); });
-              }
-            }
-          }
-        }
-      } catch(e) {}
-    }
-  }
-
   var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
 
-  // === 2. __INITIAL_STATE__ JSON ===
+  // === 1. __INITIAL_STATE__ JSON（根据 debug 数据，真实路径是 state.noteData.data.noteData） ===
   var stateStart = html.indexOf('__INITIAL_STATE__=');
   if (stateStart >= 0) {
     stateStart += '__INITIAL_STATE__='.length;
@@ -533,9 +470,16 @@ async function parseXiaohongshu(originalUrl) {
       if (depth === 0) {
         try {
           var state = JSON.parse(html.substring(stateStart, endIdx).replace(/undefined/g, 'null'));
-          var noteIdFromUrl = (realUrl || originalUrl).match(/\/(?:explore|item)\/([a-f0-9]+)/);
-          var noteDetail = state.note && state.note.noteDetailMap;
-          if (noteDetail) {
+          var noteIdFromUrl = (realUrl || originalUrl).match(/\/(?:explore|discovery\/)?item\/([a-f0-9]+)/);
+
+          // 路径1: noteData.data.noteData（新版页面结构，已验证）
+          var noteData = null;
+          if (state.noteData && state.noteData.data && state.noteData.data.noteData) {
+            noteData = state.noteData.data.noteData;
+          }
+          // 路径2: note.noteDetailMap（旧版页面结构）
+          if (!noteData && state.note && state.note.noteDetailMap) {
+            var noteDetail = state.note.noteDetailMap;
             var keys = Object.keys(noteDetail);
             var targetKey = null, matchedByUrl = false;
             if (noteIdFromUrl) {
@@ -553,63 +497,69 @@ async function parseXiaohongshu(originalUrl) {
               }
             }
             if (targetKey && matchedByUrl) {
-              var note = noteDetail[targetKey] && noteDetail[targetKey].note;
-              if (note) {
-                if (!title) title = note.title || note.desc || '';
-                if (note.user) {
-                  if (!authorName) authorName = note.user.nickname || note.user.nickName || note.user.name || '';
-                  if (!authorAvatar) authorAvatar = note.user.avatar || note.user.headUrl || note.user.avatarUrl || '';
-                  if (!authorId) authorId = note.user.userId || note.user.user_id || note.user.id || '';
-                }
-                if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || '';
-                if (!videoUrl && note.video) {
-                  var vs = note.video;
-                  var tryPaths = [];
-                  if (vs.media && vs.media.stream) {
-                    var s = vs.media.stream;
-                    (s.h264 || []).forEach(function(x) { tryPaths.push(x); });
-                    (s.h265 || []).forEach(function(x) { tryPaths.push(x); });
-                  }
-                  if (vs.masterUrl) tryPaths.push({masterUrl: vs.masterUrl});
-                  if (vs.url) tryPaths.push({masterUrl: vs.url});
-                  if (vs.videoUrl) tryPaths.push({masterUrl: vs.videoUrl});
-                  for (var ti = 0; ti < tryPaths.length; ti++) {
-                    var cdd = tryPaths[ti];
-                    var allUrls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []);
-                    for (var ui = 0; ui < allUrls.length; ui++) {
-                      var u = allUrls[ui];
-                      if (u) {
-                        u = u.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-                        if (u.indexOf('http://') === 0) u = 'https://' + u.substring(7);
-                        if (u.indexOf('_309') > 0) { videoUrl = u; break; }
-                        if (!videoUrl && (u.indexOf('.mp4') > 0 || u.indexOf('.m3u8') > 0)) videoUrl = u;
-                      }
+              noteData = noteDetail[targetKey] && noteDetail[targetKey].note;
+            }
+          }
+
+          // 从 noteData 提取数据
+          if (noteData) {
+            if (!title) title = noteData.title || noteData.desc || '';
+            if (noteData.user) {
+              if (!authorName) authorName = noteData.user.nickname || noteData.user.nickName || noteData.user.name || '';
+              if (!authorAvatar) authorAvatar = noteData.user.avatar || noteData.user.headUrl || noteData.user.avatarUrl || (noteData.user.avatar && ('https://sns-avatar-qc.xhscdn.com/avatar/' + noteData.user.avatar + '?imageView2/2/w/120/format/jpg')) || '';
+              if (!authorId) authorId = noteData.user.userId || noteData.user.user_id || noteData.user.id || noteData.userId || '';
+            }
+            if (!cover && noteData.cover) cover = noteData.cover.urlDefault || noteData.cover.url || noteData.cover.urlDefault || '';
+            // 尝试从 noteData 提取视频地址
+            if (!videoUrl) {
+              // 直接 media 路径
+              if (noteData.video && noteData.video.media && noteData.video.media.stream) {
+                var s = noteData.video.media.stream;
+                var tryStreams = (s.h264 || []).concat(s.h265 || []);
+                for (var ti = 0; ti < tryStreams.length; ti++) {
+                  var cdd = tryStreams[ti];
+                  var allUrls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []);
+                  for (var ui = 0; ui < allUrls.length; ui++) {
+                    var u = allUrls[ui];
+                    if (u) {
+                      u = u.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+                      if (u.indexOf('http://') === 0) u = 'https://' + u.substring(7);
+                      if (u.indexOf('_309') > 0) { videoUrl = u; break; }
+                      if (!videoUrl && (u.indexOf('.mp4') > 0 || u.indexOf('.m3u8') > 0)) videoUrl = u;
                     }
-                    if (videoUrl && videoUrl.indexOf('_309') > 0) break;
                   }
+                  if (videoUrl && videoUrl.indexOf('_309') > 0) break;
                 }
-                if (note.imageList && note.imageList.length) {
-                  note.imageList.forEach(function(img) { if (!images.length) images.push(img.urlDefault || img.url || ''); });
+              }
+              // 扁平路径
+              if (!videoUrl && noteData.video) {
+                var flatPaths = ['masterUrl', 'url', 'videoUrl', 'playUrl', 'play_addr'];
+                for (var fi = 0; fi < flatPaths.length; fi++) {
+                  var val = noteData.video[flatPaths[fi]];
+                  if (val && typeof val === 'string') {
+                    val = val.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+                    if (val.indexOf('http://') === 0) val = 'https://' + val.substring(7);
+                    if (val.indexOf('_309') > 0) { videoUrl = val; break; }
+                    if (!videoUrl && (val.indexOf('.mp4') > 0 || val.indexOf('.m3u8') > 0)) videoUrl = val;
+                  }
                 }
               }
             }
-          }
-          if ((!authorName || !authorAvatar) && state.user) {
-            if (!authorName) authorName = state.user.nickname || state.user.name || state.user.nickName || '';
-            if (!authorAvatar) authorAvatar = state.user.avatar || state.user.headUrl || '';
-            if (!authorId) authorId = state.user.userId || state.user.id || '';
+            if (!images.length && noteData.imageList && noteData.imageList.length) {
+              noteData.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
+            }
           }
         } catch(e) {}
       }
     }
   }
 
-  // === 3. DOM 视频地址搜索（不限制 CDN，在 noteId 附近搜 masterUrl） ===
+  // === 2. DOM 视频地址搜索（按 noteId 限定范围，避免张冠李戴） ===
   if (!videoUrl && !images.length) {
-    var searchNoteId = noteIdMatch ? noteIdMatch[1] : '';
-    // 如果能拿到 noteId，在 noteId 附近 20000 字符内搜 masterUrl，避免抓到别的笔记
-    if (searchNoteId) {
-      var notePos = html.indexOf('"' + searchNoteId + '"');
+    var searchNoteId = (realUrl || originalUrl).match(/\/(?:explore|discovery\/)?item\/([a-f0-9]+)/);
+    var noteIdStr = searchNoteId ? searchNoteId[1] : '';
+    if (noteIdStr) {
+      var notePos = html.indexOf('"' + noteIdStr + '"');
       if (notePos >= 0) {
         var searchStart = Math.max(0, notePos - 10000);
         var searchEnd = Math.min(html.length, notePos + 10000);
@@ -625,7 +575,6 @@ async function parseXiaohongshu(originalUrl) {
         if (bestUrl) videoUrl = bestUrl;
       }
     }
-    // 如果 noteId 附近没找到，搜全网（此时 title 应该也是空的，不会张冠李戴）
     if (!videoUrl) {
       var muRegex2 = /"masterUrl"\s*:\s*"([^"]+)"/g;
       var muMatch2, bestUrl2 = '';
@@ -639,7 +588,7 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  // === 4. DOM 补标题 + 封面 + 作者（仅当空缺时） ===
+  // === 3. DOM 补标题 + 封面 + 作者（仅当空缺时） ===
   if (!title) {
     var h1Match = html.match(/note-card-title[^>]*><!--\[-->([^<]+)/);
     if (h1Match && h1Match[1].trim()) title = h1Match[1].trim();
