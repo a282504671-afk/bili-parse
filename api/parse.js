@@ -782,16 +782,42 @@ async function parseXiaohongshu(originalUrl) {
     // 先提取 authorId
     var userIdMatch = html.match(/"userId"\s*:\s*"([^"]+)"/);
     if (userIdMatch && !authorId) authorId = userIdMatch[1];
-    // 在 userId 附近搜索 nickname 和 avatar，避免匹配评论者
+    var uid = userIdMatch ? userIdMatch[1] : (authorId || '');
     var uidPos = html.indexOf('"userId"');
     if (uidPos >= 0) {
-      var searchStart = Math.max(0, uidPos - 3000);
-      var searchEnd = Math.min(html.length, uidPos + 3000);
+      // 在 userId 附近搜索 nickname/nickName 和 avatar
+      var searchStart = Math.max(0, uidPos - 5000);
+      var searchEnd = Math.min(html.length, uidPos + 5000);
       var userChunk = html.substring(searchStart, searchEnd);
-      var nickMatch = userChunk.match(/"nickname"\s*:\s*"([^"]+)"/);
+      var nickMatch = userChunk.match(/"(?:nickname|nickName)"\s*:\s*"([^"]+)"/);
       if (nickMatch && !authorName) authorName = nickMatch[1];
       var avatarMatch = userChunk.match(/"avatar"\s*:\s*"([^"]+)"/);
       if (avatarMatch && !authorAvatar) authorAvatar = avatarMatch[1];
+    }
+    // 最后兜底：全文搜索 nickname/nickName + 已知的 authorId 做校验
+    if (!authorName && uid) {
+      var allNameRegex = /"(?:nickname|nickName)"\s*:\s*"([^"]+)"/g;
+      var nameMatch;
+      var bestDist = 999999;
+      while ((nameMatch = allNameRegex.exec(html)) !== null) {
+        var dist = Math.abs(nameMatch.index - uidPos);
+        if (dist < bestDist) {
+          bestDist = dist;
+          authorName = nameMatch[1];
+        }
+      }
+    }
+    if (!authorAvatar && uid) {
+      var allAvatarRegex = /"avatar"\s*:\s*"([^"]+)"/g;
+      var avaMatch;
+      var bestDist = 999999;
+      while ((avaMatch = allAvatarRegex.exec(html)) !== null) {
+        var dist = Math.abs(avaMatch.index - uidPos);
+        if (dist < bestDist) {
+          bestDist = dist;
+          authorAvatar = avaMatch[1];
+        }
+      }
     }
   }
 
