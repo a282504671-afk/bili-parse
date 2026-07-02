@@ -892,6 +892,7 @@ async function parseXiaohongshu(originalUrl) {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
     cover: cover || '', url: videoUrl || '', images: images,
+    _debug: { noteMatched: typeof noteMatched !== 'undefined' ? noteMatched : null, hasState: typeof stateStart !== 'undefined' && stateStart >= 0, realUrl: (typeof realUrl !== 'undefined' ? realUrl : '').substring(0, 100) },
   });
 }
 // ========== 批量获取作者作品列表 ==========
