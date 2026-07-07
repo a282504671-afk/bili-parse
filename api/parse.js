@@ -678,16 +678,6 @@ async function parseTiktok(originalUrl) {
         var authorId = authorRaw.unique_id || authorRaw.id || authorRaw.uid || '';
         var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || authorRaw.head || '';
         if (!authorAvatar && bd.avatar) authorAvatar = bd.avatar;
-        // BugPK返回的avatar是tikwm代理的截帧，优先用HTML提取的真实TikTok头像
-        if (allAvatar && allAvatar.length > 0) {
-          var htmlAvatarMatch = allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/);
-          if (htmlAvatarMatch) {
-            var realAvatar = htmlAvatarMatch[1].replace(/\\\\u002F/g, '/').replace(/\\u002F/g, '/');
-            if (realAvatar.indexOf('tiktokcdn') > 0 || realAvatar.indexOf('p16-') > 0 || realAvatar.indexOf('p19-') > 0) {
-              authorAvatar = realAvatar;
-            }
-          }
-        }
         if (videoUrl) {
           return ok('tiktok', {
             type: 'video', title: title || '', desc: title || '',
@@ -716,16 +706,6 @@ async function parseTiktok(originalUrl) {
         var authorId = authorRaw.unique_id || authorRaw.id || '';
         var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || '';
         if (!authorAvatar && td.avatar) authorAvatar = td.avatar;
-        // tikwm返回的avatar是代理截帧，优先用HTML提取的真实TikTok头像
-        if (allAvatar && allAvatar.length > 0) {
-          var htmlAvatarMatch = allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/);
-          if (htmlAvatarMatch) {
-            var realAvatar = htmlAvatarMatch[1].replace(/\\\\u002F/g, '/').replace(/\\u002F/g, '/');
-            if (realAvatar.indexOf('tiktokcdn') > 0 || realAvatar.indexOf('p16-') > 0 || realAvatar.indexOf('p19-') > 0) {
-              authorAvatar = realAvatar;
-            }
-          }
-        }
         if (videoUrl) {
           return ok('tiktok', {
             type: 'video', title: title || '', desc: title || '',
@@ -873,7 +853,7 @@ async function parseAcfun(originalUrl) {
   });
 }
 
-// ===== 抖音 =====
+// ===== 微博 =====
 async function parseWeibo(originalUrl) {
   // 
   try {
