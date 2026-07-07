@@ -678,16 +678,16 @@ async function parseTiktok(originalUrl) {
         var authorId = authorRaw.unique_id || authorRaw.id || authorRaw.uid || '';
         var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || authorRaw.head || '';
         if (!authorAvatar && bd.avatar) authorAvatar = bd.avatar;
-        // 尝试从TikTok页面HTML提取真实CDN头像（避免tikwm代理截帧不可用）
+        // 从TikTok页面提取作者真实CDN头像（从author对象内部获取，不取观众的）
         try {
           var htmlRes = await fetch(realUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', 'Accept': 'text/html,application/xhtml+xml' },
           });
           if (htmlRes.ok) {
             var htmlText = await htmlRes.text();
-            var avMatch = htmlText.match(/"avatarLarger":"([^"]+)"/);
-            if (avMatch) {
-              var realAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+            var authAvMatch = htmlText.match(/"author":\s*\{[^}]*"uniqueId":"[^"]+"[^}]*"avatarLarger":"([^"]+)"[^}]*\}/);
+            if (authAvMatch) {
+              var realAvatar = authAvMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
               if (realAvatar.indexOf('tiktokcdn') > 0 || realAvatar.indexOf('p16-') > 0 || realAvatar.indexOf('p19-') > 0) {
                 authorAvatar = realAvatar;
               }
@@ -722,16 +722,16 @@ async function parseTiktok(originalUrl) {
         var authorId = authorRaw.unique_id || authorRaw.id || '';
         var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || '';
         if (!authorAvatar && td.avatar) authorAvatar = td.avatar;
-        // 尝试从TikTok页面HTML提取真实CDN头像
+        // 从TikTok页面提取作者真实CDN头像
         try {
           var htmlRes = await fetch(realUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', 'Accept': 'text/html,application/xhtml+xml' },
           });
           if (htmlRes.ok) {
             var htmlText = await htmlRes.text();
-            var avMatch = htmlText.match(/"avatarLarger":"([^"]+)"/);
-            if (avMatch) {
-              var realAvatar = avMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+            var authAvMatch = htmlText.match(/"author":\s*\{[^}]*"uniqueId":"[^"]+"[^}]*"avatarLarger":"([^"]+)"[^}]*\}/);
+            if (authAvMatch) {
+              var realAvatar = authAvMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
               if (realAvatar.indexOf('tiktokcdn') > 0 || realAvatar.indexOf('p16-') > 0 || realAvatar.indexOf('p19-') > 0) {
                 authorAvatar = realAvatar;
               }
