@@ -660,56 +660,62 @@ function pickBestVideoUrl(candidates) {
 }
 async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
-  var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
-
-  // 
-  var allNick = html.match(/"nickname":"([^"]+)"/g);
-  var allUid = html.match(/"uniqueId":"([^"]+)"/g);
-  var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
-
-  var paMatch = html.match(/"playAddr":"([^"]+)"/);
-  var coverMatch = html.match(/"cover":"([^"]+)"/);
-  var descMatch = html.match(/"desc":"([^"]+)"/);
-
-  // 
-  var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
-  var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
-  var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
-
-  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
-  var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
-  var title = descMatch ? descMatch[1] : '';
-
-  if (!videoUrl) return fail('未提取到TikTok视频地址');
-
-  // 
+  
+  // 优先走 BugPK 接口获取可下载的代理链接
   try {
-    var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl) + '&hd=1', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Accept': 'application/json, text/plain, */*', 'Origin': 'https://www.tikwm.com', 'Referer': 'https://www.tikwm.com/' },
-      });
+    var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl || realUrl), {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Accept': 'application/json' },
+    });
+    if (bpRes.ok) {
+      var bpJson = await bpRes.json();
+      if (bpJson.code === 200 && bpJson.data) {
+        var bd = bpJson.data;
+        var videoUrl = bd.hdplay || bd.play || bd.url || '';
+        var title = bd.title || '';
+        var cover = bd.cover || '';
+        var authorName = (bd.author && bd.author.nickname) || '';
+        var authorId = (bd.author && bd.author.unique_id) || '';
+        var authorAvatar = (bd.author && bd.author.avatar) || '';
+        if (videoUrl) {
+          return ok('tiktok', {
+            type: 'video', title: title || '', desc: title || '',
+            author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+            cover: cover || '', url: videoUrl || '', images: [],
+          });
+        }
+      }
+    }
+  } catch(e) {}
+  
+  // BugPK 失败，回退到 tikwm
+  try {
+    var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Accept': 'application/json' },
+    });
     if (tikRes.ok) {
       var tikJson = await tikRes.json();
       if ((tikJson.code === 0 || tikJson.code === 200) && tikJson.data) {
         var td = tikJson.data;
-        if (td.hdplay || td.play || td.url) videoUrl = td.hdplay || td.play || td.url;
-        if (!authorName) authorName = (td.author && td.author.nickname) || '';
-        if (!authorId) authorId = (td.author && td.author.unique_id) || '';
-        if (!authorAvatar) authorAvatar = (td.author && td.author.avatar) || '';
-        if (!cover) cover = td.cover || '';
-        if (!title) title = td.title || '';
+        var videoUrl = td.hdplay || td.play || td.url || '';
+        var title = td.title || '';
+        var cover = td.cover || '';
+        var authorName = (td.author && td.author.nickname) || '';
+        var authorId = (td.author && td.author.unique_id) || '';
+        var authorAvatar = (td.author && td.author.avatar) || '';
+        if (videoUrl) {
+          return ok('tiktok', {
+            type: 'video', title: title || '', desc: title || '',
+            author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+            cover: cover || '', url: videoUrl || '', images: [],
+          });
+        }
       }
     }
   } catch(e) {}
-
-  return ok('tiktok', {
-    type: 'video', title: title || '', desc: title || '',
-    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-    cover: cover || '', url: videoUrl || '', images: [],
-  });
+  
+  // 全部失败
+  return fail('TikTok解析失败：所有数据源均不可用');
 }
-
-
-// ===== ???? =====
 async function parseXigua(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.ixigua.com/' });
