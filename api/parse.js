@@ -879,11 +879,7 @@ async function parseWeixin(originalUrl) {
 }
 
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
-
-async function handleRequest(request) {
+export default async function handler(request) {
 const url = new URL(request.url);
   const headers = {
     'Access-Control-Allow-Origin': '*',
