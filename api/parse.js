@@ -49,7 +49,7 @@ async function fetchHtml(url, extraHeaders = {}) {
   return await res.text();
 }
 
-// ===== ?? =====
+// ===== 抖音 =====
 function extractDouyinItemId(url) {
   var m = url.match(/\/(?:share\/)?video\/(\d{6,})/);
   if (m) return m[1];
@@ -84,21 +84,21 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
-  // ?????URL??item_id???URL?/video/xxx?
+  // 尝试从原始URL提取item_id（完整URL：/video/xxx）
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
 
   if (itemId) {
-    // ?item_id??iesdouyin.com/share/video/??????????JS???
+    // 有item_id，走iesdouyin.com/share/video/短链重定向流程（绕过JS挑战）
     var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
     var resolvedUrl = await resolveRedirect(shareUrl);
     if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
   } else {
-    // ?item_id??v.douyin.com?????resolveRedirect????URL???
+    // 无item_id（如v.douyin.com短链），先resolveRedirect获取完整URL再提取
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未提取到视频ID');
-    // ? itemId ???? /share/video/ ????JS??????? /xg/video/ ????
+    // 有 itemId 后统一走 /share/video/ 路径绕过JS挑战（兼容 /xg/video/ 等路径）
     var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
     var resolvedUrl = await resolveRedirect(shareUrl);
     if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
@@ -147,7 +147,7 @@ async function parseDouyin(originalUrl) {
     if (ogI) cover = ogI[1];
   }
 
-  // ??HTML????????????API
+  // 如果HTML提取失败，尝试直接调抖音API
   if (!playUrl) {
     try {
       var apiRes = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + itemId, {
@@ -252,7 +252,7 @@ async function parseBilibili(originalUrl) {
   }
 
   if (!info || !videoUrl) {
-    // Vercel ??
+    // Vercel 兜底
     try {
       var vcRes = await fetch('https://bili-parse-xrg9.vercel.app/?url=' + encodeURIComponent(originalUrl), {
         headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -316,7 +316,7 @@ async function parseBilibili(originalUrl) {
   });
 }
 
-// ===== ?? =====
+// ===== 抖音 =====
 async function parseKuaishou(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
@@ -327,9 +327,9 @@ async function parseKuaishou(originalUrl) {
 
   // 
   // 
-  var BAD_NAMES = ['西瓜视频', '小红书', '西瓜视频', '小红书', '微信视频号', '西瓜视频', '抖音', 'kwai user', 'KuaiShou User', 'null', 'undefined'];
+  var BAD_NAMES = ['快手用户', '神秘人', '热门用户', '已注销', '账号已注销', '未知用户', '佚名', 'kwai user', 'KuaiShou User', 'null', 'undefined'];
   // 
-  var GARBAGE_PATTERN = /^[\??\uFFFD\*\-_=.\s]+$/;
+  var GARBAGE_PATTERN = /^[\\?？\\uFFFD\\*\\-_=.\\s]+\$/;
   var isGarbageName = function (v) {
     if (v === null || v === undefined) return true;
     var s = String(v).trim();
@@ -504,7 +504,7 @@ async function parseKuaishou(originalUrl) {
   });
 }
 
-// ===== ???=====
+// ===== 小红书 =====
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [];
@@ -678,6 +678,16 @@ async function parseTiktok(originalUrl) {
         var authorId = authorRaw.unique_id || authorRaw.id || authorRaw.uid || '';
         var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || authorRaw.head || '';
         if (!authorAvatar && bd.avatar) authorAvatar = bd.avatar;
+        // BugPK返回的avatar是tikwm代理的截帧，优先用HTML提取的真实TikTok头像
+        if (allAvatar && allAvatar.length > 0) {
+          var htmlAvatarMatch = allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/);
+          if (htmlAvatarMatch) {
+            var realAvatar = htmlAvatarMatch[1].replace(/\\\\u002F/g, '/').replace(/\\u002F/g, '/');
+            if (realAvatar.indexOf('tiktokcdn') > 0 || realAvatar.indexOf('p16-') > 0 || realAvatar.indexOf('p19-') > 0) {
+              authorAvatar = realAvatar;
+            }
+          }
+        }
         if (videoUrl) {
           return ok('tiktok', {
             type: 'video', title: title || '', desc: title || '',
@@ -706,6 +716,16 @@ async function parseTiktok(originalUrl) {
         var authorId = authorRaw.unique_id || authorRaw.id || '';
         var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || '';
         if (!authorAvatar && td.avatar) authorAvatar = td.avatar;
+        // tikwm返回的avatar是代理截帧，优先用HTML提取的真实TikTok头像
+        if (allAvatar && allAvatar.length > 0) {
+          var htmlAvatarMatch = allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/);
+          if (htmlAvatarMatch) {
+            var realAvatar = htmlAvatarMatch[1].replace(/\\\\u002F/g, '/').replace(/\\u002F/g, '/');
+            if (realAvatar.indexOf('tiktokcdn') > 0 || realAvatar.indexOf('p16-') > 0 || realAvatar.indexOf('p19-') > 0) {
+              authorAvatar = realAvatar;
+            }
+          }
+        }
         if (videoUrl) {
           return ok('tiktok', {
             type: 'video', title: title || '', desc: title || '',
@@ -853,7 +873,7 @@ async function parseAcfun(originalUrl) {
   });
 }
 
-// ===== ?? =====
+// ===== 抖音 =====
 async function parseWeibo(originalUrl) {
   // 
   try {
@@ -876,7 +896,7 @@ async function parseWeibo(originalUrl) {
   return fail('暂不支持该平台 尝试BugPK');
 }
 
-// ===== ????? =====
+// ===== 微信视频号 =====
 async function parseWeixin(originalUrl) {
   // 
   try {
@@ -896,7 +916,7 @@ async function parseWeixin(originalUrl) {
     }
   } catch(e) {}
 
-  return fail('???暂不支持该平台 尝试BugPK');
+  return fail('暂不支持该平台 尝试BugPK');
 }
 
 
@@ -915,7 +935,7 @@ const url = new URL(request.url);
   }
 
   try {
-    // ???? action=proxy???? url ??????
+    // 优先检查 action=proxy，避免被 url 参数检查拦截
     var action = url.searchParams.get('action');
     if (action === 'proxy') {
       var videoUrl = url.searchParams.get('video');
