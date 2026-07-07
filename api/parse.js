@@ -890,10 +890,6 @@ async function parseWeixin(originalUrl) {
 }
 
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
-
 export const config = { runtime: 'edge' };
 
 export default async function handler(request) {
