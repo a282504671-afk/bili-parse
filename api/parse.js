@@ -689,7 +689,7 @@ async function parseTiktok(originalUrl) {
     });
     if (tikRes.ok) {
       var tikJson = await tikRes.json();
-      if (tikJson.code === 0 && tikJson.data) {
+      if ((tikJson.code === 0 || tikJson.code === 200) && tikJson.data) {
         var td = tikJson.data;
         if (td.hdplay || td.play || td.url) videoUrl = td.hdplay || td.play || td.url;
         if (!authorName) authorName = (td.author && td.author.nickname) || '';
@@ -947,3 +947,4 @@ const url = new URL(request.url);
     return new Response(JSON.stringify(fail('解析失败: ' + (e && e.message ? e.message : String(e)))), { status: 500, headers });
   }
 }
+
