@@ -15,7 +15,7 @@ const PLATFORM_NAMES = {
 };
 
 function ok(platform, data) {
-  return { code: 200, msg: '解析成功', platform, platformName: PLATFORM_NAMES[platform] || platform, data };
+  return { code: 200, msg: '西瓜视频', platform, platformName: PLATFORM_NAMES[platform] || platform, data };
 }
 function fail(msg, code = 500) {
   return { code, msg };
@@ -49,7 +49,7 @@ async function fetchHtml(url, extraHeaders = {}) {
   return await res.text();
 }
 
-// ===== 抖音 =====
+// ===== ?? =====
 function extractDouyinItemId(url) {
   var m = url.match(/\/(?:share\/)?video\/(\d{6,})/);
   if (m) return m[1];
@@ -84,21 +84,21 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
-  // 尝试从原始URL提取item_id（完整URL：/video/xxx）
+  // ?????URL??item_id???URL?/video/xxx?
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
 
   if (itemId) {
-    // 有item_id，走iesdouyin.com/share/video/短链重定向流程（绕过JS挑战）
+    // ?item_id??iesdouyin.com/share/video/??????????JS???
     var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
     var resolvedUrl = await resolveRedirect(shareUrl);
     if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
   } else {
-    // 无item_id（如v.douyin.com短链），先resolveRedirect获取完整URL再提取
+    // ?item_id??v.douyin.com?????resolveRedirect????URL???
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
-    if (!itemId) return fail('未能从链接中提取视频ID');
-    // 有 itemId 后统一走 /share/video/ 路径绕过JS挑战（兼容西瓜 /xg/video/ 等路径）
+    if (!itemId) return fail('未提取到视频ID');
+    // ? itemId ???? /share/video/ ????JS??????? /xg/video/ ????
     var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
     var resolvedUrl = await resolveRedirect(shareUrl);
     if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
@@ -147,7 +147,7 @@ async function parseDouyin(originalUrl) {
     if (ogI) cover = ogI[1];
   }
 
-  // 如果HTML提取失败，尝试直接调抖音API
+  // ??HTML????????????API
   if (!playUrl) {
     try {
       var apiRes = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + itemId, {
@@ -174,7 +174,7 @@ async function parseDouyin(originalUrl) {
     } catch(e) { /* API fallback failed */ }
   }
 
-  if (!playUrl) return fail('从页面HTML提取视频数据失败，item_id=' + itemId);
+  if (!playUrl) return fail('HTML提取视频失败 item_id=' + itemId);
 
   return ok('douyin', {
     type: images.length ? 'image' : 'video',
@@ -199,7 +199,7 @@ async function parseBilibili(originalUrl) {
   var bvMatch = realUrl.match(/BV[0-9A-Za-z]+/);
   if (!bvMatch) {
     var avMatch = realUrl.match(/av(\d+)/i);
-    if (!avMatch) return fail('未识别到BV号');
+    if (!avMatch) return fail('未提取到BV号');
     bvMatch = { 0: avMatch[0] };
   }
   var bvid = bvMatch[0];
@@ -252,7 +252,7 @@ async function parseBilibili(originalUrl) {
   }
 
   if (!info || !videoUrl) {
-    // Vercel 兜底
+    // Vercel ??
     try {
       var vcRes = await fetch('https://bili-parse-xrg9.vercel.app/?url=' + encodeURIComponent(originalUrl), {
         headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -272,7 +272,7 @@ async function parseBilibili(originalUrl) {
     } catch(e) {}
   }
 
-  if (!info) return fail('获取B站视频信息失败，可能被海外IP限制');
+  if (!info) return fail('B站API未返回数据（可能IP限制）');
 
   // 
   if (!videoUrl && info.cid && info.aid) {
@@ -316,7 +316,7 @@ async function parseBilibili(originalUrl) {
   });
 }
 
-// ===== 快手 =====
+// ===== ?? =====
 async function parseKuaishou(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.kuaishou.com/' });
@@ -327,9 +327,9 @@ async function parseKuaishou(originalUrl) {
 
   // 
   // 
-  var BAD_NAMES = ['快手用户', '神秘人', '热门用户', '已注销', '账号已注销', '未知用户', '佚名', 'kwai user', 'KuaiShou User', 'null', 'undefined'];
+  var BAD_NAMES = ['西瓜视频', '小红书', '西瓜视频', '小红书', '微信视频号', '西瓜视频', '抖音', 'kwai user', 'KuaiShou User', 'null', 'undefined'];
   // 
-  var GARBAGE_PATTERN = /^[\?？\uFFFD\*\-_=.\s]+$/;
+  var GARBAGE_PATTERN = /^[\??\uFFFD\*\-_=.\s]+$/;
   var isGarbageName = function (v) {
     if (v === null || v === undefined) return true;
     var s = String(v).trim();
@@ -491,7 +491,7 @@ async function parseKuaishou(originalUrl) {
   // 
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
-  if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
+  if (!video.videoUrl && !video.cover) return fail('未提取到视频信息');
 
   return ok('kuaishou', {
     type: 'video',
@@ -504,7 +504,7 @@ async function parseKuaishou(originalUrl) {
   });
 }
 
-// ===== 小红书=====
+// ===== ???=====
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [];
@@ -629,7 +629,7 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
+  if (!videoUrl && !images.length && !cover) return fail('未提取到视频内容');
 
   var dataType = videoUrl ? 'video' : (images.length ? 'image' : 'video');
 
@@ -684,9 +684,9 @@ async function parseTiktok(originalUrl) {
 
   // 
   try {
-    var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-    });
+    var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl) + '&hd=1', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Accept': 'application/json, text/plain, */*', 'Origin': 'https://www.tikwm.com', 'Referer': 'https://www.tikwm.com/' },
+      });
     if (tikRes.ok) {
       var tikJson = await tikRes.json();
       if ((tikJson.code === 0 || tikJson.code === 200) && tikJson.data) {
@@ -709,7 +709,7 @@ async function parseTiktok(originalUrl) {
 }
 
 
-// ===== 西瓜视频 =====
+// ===== ???? =====
 async function parseXigua(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.ixigua.com/' });
@@ -718,7 +718,7 @@ async function parseXigua(originalUrl) {
 
   // 
   var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
-  if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
+  if (tMatch) title = tMatch[1].replace(/\\|\\s*西瓜视频$/, '').trim();
   var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
   if (iMatch) cover = iMatch[1];
 
@@ -773,7 +773,7 @@ async function parseAcfun(originalUrl) {
 
   // 
   var acMatch = realUrl.match(/[?&]ac=(\d+)/);
-  if (!acMatch) return fail('未识别到AC号');
+  if (!acMatch) return fail('未提取到AC号');
 
   // 
   var viStart = html.indexOf('window.videoInfo =');
@@ -834,7 +834,7 @@ async function parseAcfun(originalUrl) {
   var uidMatch = html.match(/\/upPage\/(\d+)/);
   if (uidMatch) authorId = uidMatch[1];
 
-  if (!title && !cover) return fail('未提取到A站视频信息');
+  if (!title && !cover) return fail('AcFun未返回数据');
 
   return ok('acfun', {
     type: 'video', title: title || '', desc: title || '',
@@ -843,7 +843,7 @@ async function parseAcfun(originalUrl) {
   });
 }
 
-// ===== 微博 =====
+// ===== ?? =====
 async function parseWeibo(originalUrl) {
   // 
   try {
@@ -863,10 +863,10 @@ async function parseWeibo(originalUrl) {
     }
   } catch(e) {}
 
-  return fail('微博解析失败（BUGPK 代理）');
+  return fail('暂不支持该平台 尝试BugPK');
 }
 
-// ===== 微信视频号 =====
+// ===== ????? =====
 async function parseWeixin(originalUrl) {
   // 
   try {
@@ -886,7 +886,7 @@ async function parseWeixin(originalUrl) {
     }
   } catch(e) {}
 
-  return fail('微信视频号解析失败（BUGPK 代理）');
+  return fail('???暂不支持该平台 尝试BugPK');
 }
 
 
@@ -905,7 +905,7 @@ const url = new URL(request.url);
   }
 
   try {
-    // 优先检查 action=proxy，避免被 url 参数检查拦截
+    // ???? action=proxy???? url ??????
     var action = url.searchParams.get('action');
     if (action === 'proxy') {
       var videoUrl = url.searchParams.get('video');
@@ -947,4 +947,6 @@ const url = new URL(request.url);
     return new Response(JSON.stringify(fail('解析失败: ' + (e && e.message ? e.message : String(e)))), { status: 500, headers });
   }
 }
+
+
 
