@@ -84,14 +84,21 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
+  // 尝试从原始URL提取item_id（完整URL：/video/xxx）
   var itemId = extractDouyinItemId(originalUrl);
-  if (!itemId) return fail('未能从链接中提取视频ID');
+  var realUrl = originalUrl;
 
-  // 优先走iesdouyin.com/share/video/短链重定向流程（绕过JS挑战）
-  var redirectUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
-  var realUrl = await resolveRedirect(redirectUrl);
-  // 如果重定向未到达douyin.com，退回到原始URL
-  if (!realUrl || realUrl.indexOf('douyin.com') < 0) realUrl = originalUrl;
+  if (itemId) {
+    // 有item_id，走iesdouyin.com/share/video/短链重定向流程（绕过JS挑战）
+    var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
+    var resolvedUrl = await resolveRedirect(shareUrl);
+    if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
+  } else {
+    // 无item_id（如v.douyin.com短链），先resolveRedirect获取完整URL再提取
+    realUrl = await resolveRedirect(originalUrl);
+    itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
+    if (!itemId) return fail('未能从链接中提取视频ID');
+  }
 
   var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
   var item = extractDouyinDataFromHtml(html);
