@@ -904,13 +904,8 @@ const url = new URL(request.url);
     return new Response(null, { status: 200, headers });
   }
 
-  const targetUrl = url.searchParams.get('url');
-  if (!targetUrl) {
-    return new Response(JSON.stringify(fail('缺少 url 参数', 400)), { status: 400, headers });
-  }
-
   try {
-    // 
+    // 优先检查 action=proxy，避免被 url 参数检查拦截
     var action = url.searchParams.get('action');
     if (action === 'proxy') {
       var videoUrl = url.searchParams.get('video');
@@ -926,6 +921,11 @@ const url = new URL(request.url);
         'Cache-Control': 'public, max-age=3600',
       });
       return new Response(proxyRes.body, { status: 200, headers: proxyHeaders });
+    }
+
+    const targetUrl = url.searchParams.get('url');
+    if (!targetUrl) {
+      return new Response(JSON.stringify(fail('缺少 url 参数', 400)), { status: 400, headers });
     }
 
     const platform = detectPlatform(targetUrl);
