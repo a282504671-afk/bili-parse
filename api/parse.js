@@ -118,8 +118,27 @@ async function parseDouyin(originalUrl) {
   var images = [];
 
   if (item) {
-    playUrl = (video.play_addr && video.play_addr.url_list && video.play_addr.url_list[0]) || '';
-    if (playUrl) playUrl = playUrl.replace('playwm', 'play').replace(/\\u002F/g, '/');
+    // 优先取最高画质（bit_rate排序取最大quality_type，然后是play_addr_1080p，最后play_addr）
+        if (video.bit_rate && video.bit_rate.length) {
+          var sortedBR = video.bit_rate.slice().sort(function(a,b) { return (b.quality_type||0) - (a.quality_type||0); });
+          for (var bi = 0; bi < sortedBR.length; bi++) {
+            if (sortedBR[bi].play_addr && sortedBR[bi].play_addr.url_list && sortedBR[bi].play_addr.url_list[0]) {
+              playUrl = sortedBR[bi].play_addr.url_list[0];
+              break;
+            }
+          }
+        }
+        if (!playUrl && video.play_addr_1080p && video.play_addr_1080p.url_list && video.play_addr_1080p.url_list[0]) {
+          playUrl = video.play_addr_1080p.url_list[0];
+        }
+        if (!playUrl) {
+          playUrl = (video.play_addr && video.play_addr.url_list && video.play_addr.url_list[0]) || '';
+        }
+    if (playUrl) {
+      playUrl = playUrl.replace('playwm', 'play').replace(/\\\\u002F/g, '/');
+      // 抖音：ratio=720p → 1080p 提升画质
+      if (playUrl.indexOf('ratio=720p') >= 0) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
+    }
     title = item.desc || (item.share_info && item.share_info.share_title) || (item.video && item.video.text) || (item.promotions && item.promotions[0] && item.promotions[0].title) || '';
     cover = (video.origin_cover && video.origin_cover.url_list && video.origin_cover.url_list[0]) || (video.cover && video.cover.url_list && video.cover.url_list[0]) || (video.dynamic_cover && video.dynamic_cover.url_list && video.dynamic_cover.url_list[0]) || '';
     authorName = author.nickname || '';
@@ -162,8 +181,27 @@ async function parseDouyin(originalUrl) {
         var itemData = apiJson.aweme_detail || apiJson.data || apiJson;
         if (itemData && itemData.video) {
           var v = itemData.video;
-          playUrl = (v.play_addr && v.play_addr.url_list && v.play_addr.url_list[0]) || '';
-          if (playUrl) playUrl = playUrl.replace('playwm', 'play').replace(/\\u002F/g, '/');
+          // 优先取最高画质（API路径）
+          if (v.bit_rate && v.bit_rate.length) {
+            var sortedBR = v.bit_rate.slice().sort(function(a,b) { return (b.quality_type||0) - (a.quality_type||0); });
+            for (var bi = 0; bi < sortedBR.length; bi++) {
+              if (sortedBR[bi].play_addr && sortedBR[bi].play_addr.url_list && sortedBR[bi].play_addr.url_list[0]) {
+                playUrl = sortedBR[bi].play_addr.url_list[0];
+                break;
+              }
+            }
+          }
+          if (!playUrl && v.play_addr_1080p && v.play_addr_1080p.url_list && v.play_addr_1080p.url_list[0]) {
+            playUrl = v.play_addr_1080p.url_list[0];
+          }
+          if (!playUrl) {
+            playUrl = (v.play_addr && v.play_addr.url_list && v.play_addr.url_list[0]) || '';
+          }
+          if (playUrl) {
+              playUrl = playUrl.replace('playwm', 'play').replace(/\\\\u002F/g, '/');
+              // 抖音：ratio=720p → 1080p 提升画质
+              if (playUrl.indexOf('ratio=720p') >= 0) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
+            }
           if (!title) title = itemData.desc || itemData.share_info && itemData.share_info.share_title || '';
           if (!cover) cover = (v.origin_cover && v.origin_cover.url_list && v.origin_cover.url_list[0]) || (v.cover && v.cover.url_list && v.cover.url_list[0]) || '';
           if (!authorName) authorName = (itemData.author && itemData.author.nickname) || '';
