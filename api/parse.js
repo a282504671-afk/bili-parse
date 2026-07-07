@@ -15,7 +15,7 @@ const PLATFORM_NAMES = {
 };
 
 function ok(platform, data) {
-  return { code: 200, msg: '西瓜视频', platform, platformName: PLATFORM_NAMES[platform] || platform, data };
+  return { code: 200, msg: '解析成功', platform, platformName: PLATFORM_NAMES[platform] || platform, data };
 }
 function fail(msg, code = 500) {
   return { code, msg };
@@ -671,11 +671,13 @@ async function parseTiktok(originalUrl) {
       if (bpJson.code === 200 && bpJson.data) {
         var bd = bpJson.data;
         var videoUrl = bd.hdplay || bd.play || bd.url || '';
-        var title = bd.title || '';
+        var title = bd.title || bd.desc || '';
         var cover = bd.cover || '';
-        var authorName = (bd.author && bd.author.nickname) || '';
-        var authorId = (bd.author && bd.author.unique_id) || '';
-        var authorAvatar = (bd.author && bd.author.avatar) || '';
+        var authorRaw = bd.author || {};
+        var authorName = authorRaw.nickname || authorRaw.name || authorRaw.nick || authorRaw.username || '';
+        var authorId = authorRaw.unique_id || authorRaw.id || authorRaw.uid || '';
+        var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || authorRaw.head || '';
+        if (!authorAvatar && bd.avatar) authorAvatar = bd.avatar;
         if (videoUrl) {
           return ok('tiktok', {
             type: 'video', title: title || '', desc: title || '',
@@ -697,11 +699,13 @@ async function parseTiktok(originalUrl) {
       if ((tikJson.code === 0 || tikJson.code === 200) && tikJson.data) {
         var td = tikJson.data;
         var videoUrl = td.hdplay || td.play || td.url || '';
-        var title = td.title || '';
+        var title = td.title || td.desc || '';
         var cover = td.cover || '';
-        var authorName = (td.author && td.author.nickname) || '';
-        var authorId = (td.author && td.author.unique_id) || '';
-        var authorAvatar = (td.author && td.author.avatar) || '';
+        var authorRaw = td.author || {};
+        var authorName = authorRaw.nickname || authorRaw.name || '';
+        var authorId = authorRaw.unique_id || authorRaw.id || '';
+        var authorAvatar = authorRaw.avatar || authorRaw.avatar_larger || '';
+        if (!authorAvatar && td.avatar) authorAvatar = td.avatar;
         if (videoUrl) {
           return ok('tiktok', {
             type: 'video', title: title || '', desc: title || '',
