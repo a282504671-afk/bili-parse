@@ -5,7 +5,7 @@ const UA_WECHAT = 'Mozilla/5.0 (Linux; Android 12; Pixel 6 Build/SQ3A.220705.003
 const PLATFORM_NAMES = {
   douyin: '抖音',
   tiktok: 'TikTok',
-  bilibili: 'B?',
+  bilibili: 'bilibili',
   acfun: 'AcFun',
   ixigua: '西瓜视频',
   kuaishou: '快手',
@@ -98,6 +98,10 @@ async function parseDouyin(originalUrl) {
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
+    // 有 itemId 后统一走 /share/video/ 路径绕过JS挑战（兼容西瓜 /xg/video/ 等路径）
+    var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
+    var resolvedUrl = await resolveRedirect(shareUrl);
+    if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
   }
 
   var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
@@ -885,6 +889,10 @@ async function parseWeixin(originalUrl) {
   return fail('微信视频号解析失败（BUGPK 代理）');
 }
 
+
+addEventListener('fetch', event => {
+  event.respondWith(handleRequest(event.request));
+});
 
 export const config = { runtime: 'edge' };
 
