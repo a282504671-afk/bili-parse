@@ -797,47 +797,91 @@ async function parseWeibo(originalUrl) {
   return fail('微博解析失败（BUGPK 代理）');
 }// ===== 微信视频号=====
 async function parseWeixin(originalUrl) {
-  // 方案1：直接抓取微信视频号页面HTML，从meta标签提取视频信息
-  try {
-    var html = await fetchHtml(originalUrl, { 'User-Agent': UA_WECHAT });
-    var title = '', cover = '', videoUrl = '', desc = '';
-    var author = '', authorAvatar = '';
+  // 重试3次，每次使用不同的策略
+  var lastErr = null;
+  var attempts = [
+    { ua: UA_WECHAT, label: 'WeChat UA' },
+    { ua: UA, label: 'Chrome UA' },
+  ];
+  
+  for (var t = 0; t < attempts.length; t++) {
+    try {
+      var html = await fetchHtml(originalUrl, { 'User-Agent': attempts[t].ua });
+      var title = '', cover = '', videoUrl = '', desc = '';
+      var author = '', authorAvatar = '';
 
-    var m = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
-    if (m) title = m[1];
-    if (!title) { m = html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:title["']/i); if (m) title = m[1]; }
+      // 策略1: 查找 __INITIAL_STATE__
+      var match = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/);
+      if (match) {
+        try {
+          var state = JSON.parse(match[1]);
+          var vd = state.videoData || state.finderData || state.shareData || state.mediaData || {};
+          if (vd.url || (vd.video && vd.video.url)) {
+            title = vd.title || vd.desc || vd.caption || '';
+            desc = vd.desc || vd.title || vd.caption || '';
+            cover = vd.cover || vd.thumb || vd.pic || (vd.coverUrl ? vd.coverUrl : '');
+            videoUrl = vd.url || (vd.video ? vd.video.url : '') || vd.playUrl || vd.play_url || '';
+            if (vd.author) { author = vd.author.name || vd.author.nickname || ''; authorAvatar = vd.author.avatar || vd.author.headUrl || ''; }
+          }
+        } catch(e) {}
+      }
 
-    m = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
-    if (m) desc = m[1];
-    if (!desc) { m = html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:description["']/i); if (m) desc = m[1]; }
+      // 策略2: __NEXT_DATA__
+      if (!videoUrl) {
+        var m2 = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
+        if (m2) {
+          try { var nd = JSON.parse(m2[1]); if (nd.props && nd.props.pageProps) { var pp = nd.props.pageProps; videoUrl = pp.url || pp.videoUrl || ''; title = pp.title || ''; cover = pp.cover || pp.image || ''; } } catch(e) {}
+        }
+      }
 
-    m = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-    if (m) cover = m[1];
-    if (!cover) { m = html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:image["']/i); if (m) cover = m[1]; }
+      // 策略3: og:video meta标签
+      if (!videoUrl) {
+        var m;
+        m = html.match(/<meta\s+property=["']og:video:secure_url["']\s+content=["']([^"']+)["']/i);
+        if (m) videoUrl = m[1];
+        if (!videoUrl) { m = html.match(/<meta\s+property=["']og:video["']\s+content=["']([^"']+)["']/i); if (m) videoUrl = m[1]; }
+        m = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
+        if (m) title = m[1];
+        m = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+        if (m) cover = m[1];
+      }
 
-    m = html.match(/<meta\s+property=["']og:video:secure_url["']\s+content=["']([^"']+)["']/i);
-    if (m) videoUrl = m[1];
-    if (!videoUrl) { m = html.match(/<meta\s+property=["']og:video["']\s+content=["']([^"']+)["']/i); if (m) videoUrl = m[1]; }
-    if (!videoUrl) { m = html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:video["']/i); if (m) videoUrl = m[1]; }
+      // 策略4: 查找任何 JSON-LD 或 video 相关 script
+      if (!videoUrl) {
+        var ldMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/);
+        if (ldMatch) {
+          try { var ld = JSON.parse(ldMatch[1]); if (ld.url) videoUrl = ld.url; if (ld.name) title = ld.name; if (ld.thumbnailUrl) cover = ld.thumbnailUrl; } catch(e) {}
+        }
+      }
 
-    m = html.match(/<p[^>]*class=["']finder-card-name["'][^>]*>([^<]+)<\/p>/i);
-    if (m) author = m[1].trim();
-    if (!author) { m = html.match(/"nickname"\s*[:=]\s*"([^"]+)"/i); if (m) author = m[1]; }
-    if (!author) { m = html.match(/"name"\s*[:=]\s*"([^"]+)"/i); if (m) author = m[1]; }
+      // 策略5: 直接在HTML中搜索video/mp4链接
+      if (!videoUrl) {
+        var urlMatch = html.match(/https?:\/\/finder\.video\.qq\.com\/[^\s"']+(?:mp4|m3u8)[^\s"']*/i);
+        if (urlMatch) videoUrl = urlMatch[0];
+      }
 
-    m = html.match(/"avatar"\s*[:=]\s*"([^"]+)"/i);
-    if (m) authorAvatar = m[1];
+      if (videoUrl) {
+        if (!author) {
+          var am = html.match(/<p[^>]*class=["']finder-card-name["'][^>]*>([^<]+)<\/p>/i);
+          if (am) author = am[1].trim();
+          if (!author) { am = html.match(/"nickname"\s*[:=]\s*"([^"]+)"/i); if (am) author = am[1]; }
+          if (!author) { am = html.match(/"name"\s*[:=]\s*"([^"]+)"/i); if (am) author = am[1]; }
+          if (!author) { am = html.match(/"author_name"\s*[:=]\s*"([^"]+)"/i); if (am) author = am[1]; }
+        }
+        if (!authorAvatar) {
+          var avm = html.match(/"avatar"\s*[:=]\s*"([^"]+)"/i);
+          if (avm) authorAvatar = avm[1];
+        }
+        return ok('weixin', {
+          type: 'video', title: title || desc || '', desc: desc || title || '',
+          author: { name: author || '', id: '', avatar: authorAvatar || '' },
+          cover: cover || '', url: videoUrl, images: [],
+        });
+      }
+    } catch(e) { lastErr = e; }
+  }
 
-    if (videoUrl) {
-      return ok('weixin', {
-        type: 'video', title: title || desc || '', desc: desc || title || '',
-        author: { name: author || '', id: '', avatar: authorAvatar || '' },
-        cover: cover || '', url: videoUrl, images: [],
-      });
-    }
-  } catch(e) {}
-
-  // 方案2：BugPK兜底
+  // 全部HTML抓取失败，走BugPK
   try {
     var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -860,11 +904,13 @@ async function parseWeixin(originalUrl) {
 
 
 
+
+
 // Vercel handler
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
   if (req.method === 'OPTIONS') {
@@ -875,6 +921,60 @@ module.exports = async (req, res) => {
 
   try {
     const url = new URL(req.url, 'https://' + (req.headers.host || 'localhost'));
+    const action = url.searchParams.get('action') || '';
+
+    // action=proxy：代理下载视频（TikTok/微信等CDN防盗链）
+    if (action === 'proxy') {
+      const videoUrl = url.searchParams.get('video') || '';
+      if (!videoUrl) { res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'missing video url' })); return; }
+
+      // 根据视频URL来源设置请求头
+      let proxyHeaders = { 'User-Agent': UA };
+      if (videoUrl.includes('finder.video.qq.com') || videoUrl.includes('weixin.qq.com') || videoUrl.includes('weixin')) {
+        proxyHeaders = {
+          'User-Agent': UA_WECHAT,
+          'Referer': 'https://channels.weixin.qq.com/',
+          'Origin': 'https://channels.weixin.qq.com',
+        };
+      } else if (videoUrl.includes('tiktokcdn') || videoUrl.includes('tiktok.com')) {
+        proxyHeaders = {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
+          'Referer': 'https://www.tiktok.com/',
+          'Origin': 'https://www.tiktok.com',
+        };
+      }
+
+      // 获取Range头用于断点续传
+      const range = req.headers['range'] || '';
+      const fetchOpts = { headers: proxyHeaders };
+      if (range) fetchOpts.headers['Range'] = range;
+
+      const proxyRes = await fetch(videoUrl, fetchOpts);
+      if (!proxyRes.ok && proxyRes.status !== 206) {
+        res.statusCode = proxyRes.status;
+        res.end(JSON.stringify({ code: proxyRes.status, msg: 'proxy fetch failed' }));
+        return;
+      }
+
+      // 透传响应头
+      const contentType = proxyRes.headers.get('content-type') || 'video/mp4';
+      const contentLength = proxyRes.headers.get('content-length') || '';
+      const contentRange = proxyRes.headers.get('content-range') || '';
+      const acceptRanges = proxyRes.headers.get('accept-ranges') || 'bytes';
+
+      res.setHeader('Content-Type', contentType);
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+      res.setHeader('Accept-Ranges', acceptRanges);
+      if (range) res.statusCode = 206;
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+
+      // 使用arrayBuffer获取完整数据后返回
+      const buffer = Buffer.from(await proxyRes.arrayBuffer());
+      res.end(buffer);
+      return;
+    }
+
     const targetUrl = url.searchParams.get('url') || '';
     if (!targetUrl) { res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'missing url' })); return; }
 
@@ -899,6 +999,10 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
+
+
+
 
 
 
