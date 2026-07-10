@@ -117,10 +117,20 @@ async function parseDouyin(originalUrl) {
 
   // ===== 从HTML item_list提取数据 =====
   if (item) {
-    // 策略1: 从bit_rate数组选择最高码率的play_addr（这才是真正的高清源）
-    if (video.bit_rate && video.bit_rate.length > 0) {
+    // 策略1: download_addr优先（原始上传视频，未转码，画质最高）
+    if (video.download_addr && video.download_addr.url_list) {
+      for (var di = 0; di < video.download_addr.url_list.length; di++) {
+        var du = video.download_addr.url_list[di].replace(/\\u002F/g, '/');
+        if (du && du.indexOf('aweme.snssdk.com') < 0) { playUrl = du; break; }
+      }
+      if (!playUrl && video.download_addr.url_list.length > 0) {
+        playUrl = video.download_addr.url_list[0].replace(/\\u002F/g, '/');
+      }
+    }
+
+    // 策略2: bit_rate最高码率
+    if (!playUrl && video.bit_rate && video.bit_rate.length > 0) {
       var bestBitrate = -1;
-      var bestUrl = '';
       for (var bi = 0; bi < video.bit_rate.length; bi++) {
         var br = video.bit_rate[bi];
         var brRate = br.bit_rate || 0;
@@ -128,45 +138,24 @@ async function parseDouyin(originalUrl) {
           var brUrlList = br.play_addr && br.play_addr.url_list || [];
           for (var bui = 0; bui < brUrlList.length; bui++) {
             var bu = brUrlList[bui].replace('playwm', 'play').replace(/\\u002F/g, '/');
-            if (bu && bu.indexOf('aweme.snssdk.com') < 0) {
-              bestBitrate = brRate;
-              bestUrl = bu;
-              break;
-            }
+            if (bu && bu.indexOf('aweme.snssdk.com') < 0) { bestBitrate = brRate; playUrl = bu; break; }
           }
-          // 如果没有非aweme的URL，用第一个
-          if (brUrlList.length > 0 && !bestUrl) {
-            bestBitrate = brRate;
-            bestUrl = brUrlList[0].replace('playwm', 'play').replace(/\\u002F/g, '/');
-          }
+          if (!playUrl && brUrlList.length > 0) { bestBitrate = brRate; playUrl = brUrlList[0].replace('playwm', 'play').replace(/\\u002F/g, '/'); }
         }
       }
-      if (bestUrl) playUrl = bestUrl;
     }
 
-    // 策略2: bit_rate没有找到，用play_addr.url_list多索引
+    // 策略3: play_addr.url_list多索引
     if (!playUrl) {
       var urlList = video.play_addr && video.play_addr.url_list || [];
       for (var ui = 0; ui < urlList.length; ui++) {
         var u = urlList[ui].replace('playwm', 'play').replace(/\\u002F/g, '/');
-        if (u.indexOf('aweme.snssdk.com') >= 0) {
-          if (!playUrl) playUrl = u;
-        } else {
-          playUrl = u;
-          break;
-        }
+        if (u.indexOf('aweme.snssdk.com') >= 0) { if (!playUrl) playUrl = u; }
+        else { playUrl = u; break; }
       }
     }
 
-    // 策略3: 尝试download_addr
-    if (!playUrl && video.download_addr && video.download_addr.url_list) {
-      for (var di = 0; di < video.download_addr.url_list.length; di++) {
-        var du = video.download_addr.url_list[di].replace(/\\u002F/g, '/');
-        if (du) { playUrl = du; break; }
-      }
-    }
-
-    // 所有URL统一升级到1080p
+    // 统一升级到1080p
     if (playUrl) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
 
     title = item.desc || (item.share_info && item.share_info.share_title) || (item.video && item.video.text) || (item.promotions && item.promotions[0] && item.promotions[0].title) || '';
@@ -1148,6 +1137,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
