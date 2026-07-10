@@ -88,18 +88,15 @@ async function parseDouyin(originalUrl) {
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
 
-  // 先尝试通过iesdouyin.com/share/video/获取真实douyin.com链接（比v.douyin.com跳转更可靠）
   if (itemId) {
-    var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
-    var resolvedUrl = await resolveRedirect(shareUrl);
-    if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
+    // 关键：直接用iesdouyin.com/share/video/页面提取数据（不跟redirect）
+    // 这个页面包含bit_rate等完整数据，而douyin.com/video/只有单条playwm
+    realUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
   } else {
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
-    var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
-    var resolvedUrl = await resolveRedirect(shareUrl);
-    if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
+    realUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
   }
 
   var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
@@ -259,7 +256,29 @@ async function parseDouyin(originalUrl) {
     playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
   }
 
-  return ok('douyin', {
+    // ===== BugPK 兜底：HTML只有单条aweme URL时尝试BugPK获取高质量源 =====
+  if (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0) {
+    try {
+      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
+        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+      });
+      if (bpRes.ok) {
+        var bpJson = await bpRes.json();
+        if (bpJson.code === 200 && bpJson.data && bpJson.data.url) {
+          var bpUrl = bpJson.data.url;
+          if (bpUrl.indexOf('aweme.snssdk.com') < 0) {
+            playUrl = bpUrl;
+          }
+          if (!title && (bpJson.data.title || bpJson.data.desc)) title = bpJson.data.title || bpJson.data.desc || '';
+          if (!cover && bpJson.data.cover) cover = bpJson.data.cover;
+          if (!authorName && bpJson.data.author && bpJson.data.author.name) authorName = bpJson.data.author.name;
+          if (!authorId && bpJson.data.author && bpJson.data.author.id) authorId = String(bpJson.data.author.id);
+          if (!avatar && bpJson.data.author && bpJson.data.author.avatar) avatar = bpJson.data.author.avatar;
+        }
+      }
+    } catch(e) {}
+  }
+return ok('douyin', {
     type: images.length ? 'image' : 'video',
     title: title,
     desc: title || '',
@@ -1209,6 +1228,8 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
+
 
 
 
