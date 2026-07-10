@@ -1190,7 +1190,32 @@ module.exports = async (req, res) => {
               }
             }
           }
-        } catch(e) { dbgInfo.iesdouyinApiError = String(e); }
+        } catch(e) { dbgInfo.iesdouyinApiError = String(e);
+        
+        // 检查iesdouyin.com/share/video/页面数据
+        try {
+          var iesdUrl2 = "https://www.iesdouyin.com/share/video/" + dbgItemId + "/";
+          var iesdHtml2 = await fetchHtml(iesdUrl2, { Referer: "https://www.douyin.com/" });
+          var iesdItem2 = extractDouyinDataFromHtml(iesdHtml2);
+          dbgInfo.iesdHasItem = !!iesdItem2;
+          if (iesdItem2) {
+            var iesdV2 = iesdItem2.video || {};
+            dbgInfo.iesdHasDownloadAddr = !!iesdV2.download_addr;
+            dbgInfo.iesdHasBitRate = !!(iesdV2.bit_rate && iesdV2.bit_rate.length > 0);
+            dbgInfo.iesdBitRateCount = (iesdV2.bit_rate || []).length;
+            dbgInfo.iesdPlayAddrUrlCount = (iesdV2.play_addr && iesdV2.play_addr.url_list || []).length;
+            dbgInfo.iesdPlayAddrUrls = (iesdV2.play_addr && iesdV2.play_addr.url_list || []).map(function(u) { return u.replace(/\\u002F/g, "/").substring(0, 120); });
+            if (iesdV2.bit_rate && iesdV2.bit_rate.length > 0) {
+              dbgInfo.iesdBitRates = iesdV2.bit_rate.map(function(br) { 
+                return { gear: br.gear_name || "", bitrate: br.bit_rate || 0, urlCount: (br.play_addr && br.play_addr.url_list || []).length };
+              });
+            }
+            if (iesdV2.download_addr) {
+              dbgInfo.iesdDownloadAddrUrls = (iesdV2.download_addr.url_list || []).map(function(u) { return u.replace(/\\u002F/g, "/").substring(0, 120); });
+            }
+          }
+        } catch(e) { dbgInfo.iesdError = String(e); }
+ }
         res.statusCode = 200;
         res.end(JSON.stringify({ code: 200, msg: '调试信息', debug: dbgInfo }));
         return;
@@ -1228,6 +1253,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
