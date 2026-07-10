@@ -200,62 +200,70 @@ async function parseDouyin(originalUrl) {
     if (ogI) cover = ogI[1];
   }
 
-  // ===== iesdouyin API 兜底（HTML没提取到playUrl时直接调API获取更高质量视频地址） =====
-  if (!playUrl) {
-    try {
-      var apiRes = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + itemId, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://www.douyin.com/',
-          'Accept': 'application/json,text/html,application/xhtml+xml',
-        },
-      });
-      if (apiRes.ok) {
-        var apiJson = await apiRes.json();
-        var itemData = apiJson.aweme_detail || apiJson.data || apiJson;
-        if (itemData && itemData.video) {
-          var v = itemData.video;
-          // API兜底同样先bit_rate选最高码率
-          if (v.bit_rate && v.bit_rate.length > 0) {
-            var apiBestBr = -1;
-            for (var bi2 = 0; bi2 < v.bit_rate.length; bi2++) {
-              var br2 = v.bit_rate[bi2];
-              var brRate2 = br2.bit_rate || 0;
-              if (brRate2 > apiBestBr) {
-                var brUrlList2 = br2.play_addr && br2.play_addr.url_list || [];
-                for (var bui2 = 0; bui2 < brUrlList2.length; bui2++) {
-                  var bu2 = brUrlList2[bui2].replace('playwm', 'play').replace(/\\u002F/g, '/');
-                  if (bu2) {
-                    apiBestBr = brRate2;
-                    playUrl = bu2;
-                    break;
-                  }
+  // ===== iesdouyin API 补充获取（无论HTML是否找到playUrl，都尝试API获取更高质量CDN地址） =====
+  try {
+    var apiRes = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + itemId, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.douyin.com/',
+        'Accept': 'application/json,text/html,application/xhtml+xml',
+      },
+    });
+    if (apiRes.ok) {
+      var apiJson = await apiRes.json();
+      var itemData = apiJson.aweme_detail || apiJson.data || apiJson;
+      if (itemData && itemData.video) {
+        var v = itemData.video;
+        // 从API获取最高码率非aweme的play_addr
+        var apiBestUrl = '';
+        if (v.bit_rate && v.bit_rate.length > 0) {
+          var apiBestBr = -1;
+          for (var bi2 = 0; bi2 < v.bit_rate.length; bi2++) {
+            var br2 = v.bit_rate[bi2];
+            var brRate2 = br2.bit_rate || 0;
+            if (brRate2 > apiBestBr) {
+              var brUrlList2 = br2.play_addr && br2.play_addr.url_list || [];
+              for (var bui2 = 0; bui2 < brUrlList2.length; bui2++) {
+                var bu2 = brUrlList2[bui2].replace('playwm', 'play').replace(/\\u002F/g, '/');
+                if (bu2 && bu2.indexOf('aweme.snssdk.com') < 0) {
+                  apiBestBr = brRate2;
+                  apiBestUrl = bu2;
+                  break;
                 }
+              }
+              // 如果API bit_rate全是aweme，先记着第一个备用
+              if (!apiBestUrl && brUrlList2.length > 0) {
+                apiBestBr = brRate2;
+                apiBestUrl = brUrlList2[0].replace('playwm', 'play').replace(/\\u002F/g, '/');
               }
             }
           }
-          if (!playUrl) {
-            var apiUrlList = v.play_addr && v.play_addr.url_list || [];
-            for (var ai = 0; ai < apiUrlList.length; ai++) {
-              var au = apiUrlList[ai].replace('playwm', 'play').replace(/\\u002F/g, '/');
-              if (au) { playUrl = au; break; }
-            }
-          }
-          if (!playUrl && v.download_addr && v.download_addr.url_list) {
-            for (var di2 = 0; di2 < v.download_addr.url_list.length; di2++) {
-              var du2 = v.download_addr.url_list[di2].replace(/\\u002F/g, '/');
-              if (du2) { playUrl = du2; break; }
-            }
-          }
-          if (!title) title = itemData.desc || itemData.share_info && itemData.share_info.share_title || '';
-          if (!cover) cover = (v.origin_cover && v.origin_cover.url_list && v.origin_cover.url_list[0]) || (v.cover && v.cover.url_list && v.cover.url_list[0]) || '';
-          if (!authorName) authorName = (itemData.author && itemData.author.nickname) || '';
-          if (!authorId) authorId = (itemData.author && (itemData.author.unique_id || itemData.author.short_id || itemData.author.uid)) || '';
-          if (!avatar) avatar = (itemData.author && itemData.author.avatar_larger && itemData.author.avatar_larger.url_list && itemData.author.avatar_larger.url_list[0]) || (itemData.author && itemData.author.avatar_medium && itemData.author.avatar_medium.url_list && itemData.author.avatar_medium.url_list[0]) || '';
         }
+        // 如果API找到了非aweme的URL，或者当前的playUrl也是aweme但API有更高码率，用API的
+        if (apiBestUrl && (apiBestUrl.indexOf('aweme.snssdk.com') < 0 || (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0))) {
+          playUrl = apiBestUrl;
+        }
+        // API的play_addr.url_list找非aweme的URL
+        if (!apiBestUrl || (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0)) {
+          var apiUrlList = v.play_addr && v.play_addr.url_list || [];
+          for (var ai = 0; ai < apiUrlList.length; ai++) {
+            var au = apiUrlList[ai].replace('playwm', 'play').replace(/\\u002F/g, '/');
+            if (au && au.indexOf('aweme.snssdk.com') < 0) { playUrl = au; break; }
+            if (au && !playUrl) playUrl = au;
+          }
+        }
+        // 补充字段（仅当HTML提取缺失时）
+        if (!title) title = itemData.desc || (itemData.share_info && itemData.share_info.share_title) || '';
+        if (!cover) cover = (v.origin_cover && v.origin_cover.url_list && v.origin_cover.url_list[0]) || (v.cover && v.cover.url_list && v.cover.url_list[0]) || '';
+        if (!authorName) authorName = (itemData.author && itemData.author.nickname) || '';
+        if (!authorId) authorId = (itemData.author && (itemData.author.unique_id || itemData.author.short_id || itemData.author.uid)) || '';
+        if (!avatar) avatar = (itemData.author && itemData.author.avatar_larger && itemData.author.avatar_larger.url_list && itemData.author.avatar_larger.url_list[0]) || (itemData.author && itemData.author.avatar_medium && itemData.author.avatar_medium.url_list && itemData.author.avatar_medium.url_list[0]) || '';
       }
-    } catch(e) {}
-  }
+    }
+  } catch(e) {}
+
+  // 最后确保升级到1080p
+  if (playUrl) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
 
   // 最后确保aweme.snssdk.com也升级到1080p
   if (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0) {
@@ -1140,6 +1148,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
