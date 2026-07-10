@@ -1030,6 +1030,7 @@ async function parseWeixin(originalUrl) {
           if (avm) authorAvatar = avm[1];
         }
         return ok('weixin', {
+          _source: 'html',
           type: 'video', title: title || desc || '', desc: desc || title || '',
           author: { name: author || '', id: '', avatar: authorAvatar || '' },
           cover: cover || '', url: videoUrl, images: [],
@@ -1037,6 +1038,25 @@ async function parseWeixin(originalUrl) {
       }
     } catch(e) { lastErr = e; }
   }
+
+  // 尝试 52api 解析
+  try {
+    var apiRes = await fetch('https://www.52api.cn/api/sph?key=SgAYGMs3AxwD47faiPUKUzM06D&url=' + encodeURIComponent(originalUrl), {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+    });
+    if (apiRes.ok) {
+      var apiJson = await apiRes.json();
+      if (apiJson.code === 200 && apiJson.data && apiJson.data.video_url) {
+        var d = apiJson.data;
+        return ok('weixin', {
+          _source: '52api',
+          type: 'video', title: d.video_title || d.video_desc || '', desc: d.video_desc || d.video_title || '',
+          author: { name: d.video_author || '', id: '', avatar: d.video_avatar || '' },
+          cover: d.video_cover || '', url: d.video_url || '', images: [],
+        });
+      }
+    }
+  } catch(e) {}
 
   // 全部HTML抓取失败，走BugPK
   try {
@@ -1048,6 +1068,7 @@ async function parseWeixin(originalUrl) {
       if (json.code === 200 && json.data && json.data.url) {
         var d = json.data;
         return ok('weixin', {
+          _source: 'bugpk',
           type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
           author: { name: (d.author && d.author.name) || d.nickname || d.author_name || '', id: (d.author && d.author.id) || d.author_id || d.uid || d.user_id || '', avatar: (d.author && d.author.avatar) || d.avatar || d.author_avatar || d.face || '' },
           cover: d.cover || '', url: d.url || '', images: [],
