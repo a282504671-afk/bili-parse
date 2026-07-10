@@ -117,27 +117,57 @@ async function parseDouyin(originalUrl) {
 
   // ===== 从HTML item_list提取数据 =====
   if (item) {
-    // 多索引URL选择：遍历play_addr.url_list所有URL，优先选非aweme.snssdk.com的直链CDN
-    var urlList = video.play_addr && video.play_addr.url_list || [];
-    for (var ui = 0; ui < urlList.length; ui++) {
-      var u = urlList[ui].replace('playwm', 'play').replace(/\\u002F/g, '/');
-      u = u.replace('ratio=720p', 'ratio=1080p');
-      // 优先选择365yg.com/tos-cn等直接CDN链接（画质更好），其次aweme.snssdk.com
-      if (u.indexOf('aweme.snssdk.com') >= 0) {
-        if (!playUrl) playUrl = u;
-      } else {
-        playUrl = u; // 非aweme的URL优先使用
-        break;
+    // 策略1: 从bit_rate数组选择最高码率的play_addr（这才是真正的高清源）
+    if (video.bit_rate && video.bit_rate.length > 0) {
+      var bestBitrate = -1;
+      var bestUrl = '';
+      for (var bi = 0; bi < video.bit_rate.length; bi++) {
+        var br = video.bit_rate[bi];
+        var brRate = br.bit_rate || 0;
+        if (brRate > bestBitrate) {
+          var brUrlList = br.play_addr && br.play_addr.url_list || [];
+          for (var bui = 0; bui < brUrlList.length; bui++) {
+            var bu = brUrlList[bui].replace('playwm', 'play').replace(/\\u002F/g, '/');
+            if (bu && bu.indexOf('aweme.snssdk.com') < 0) {
+              bestBitrate = brRate;
+              bestUrl = bu;
+              break;
+            }
+          }
+          // 如果没有非aweme的URL，用第一个
+          if (brUrlList.length > 0 && !bestUrl) {
+            bestBitrate = brRate;
+            bestUrl = brUrlList[0].replace('playwm', 'play').replace(/\\u002F/g, '/');
+          }
+        }
+      }
+      if (bestUrl) playUrl = bestUrl;
+    }
+
+    // 策略2: bit_rate没有找到，用play_addr.url_list多索引
+    if (!playUrl) {
+      var urlList = video.play_addr && video.play_addr.url_list || [];
+      for (var ui = 0; ui < urlList.length; ui++) {
+        var u = urlList[ui].replace('playwm', 'play').replace(/\\u002F/g, '/');
+        if (u.indexOf('aweme.snssdk.com') >= 0) {
+          if (!playUrl) playUrl = u;
+        } else {
+          playUrl = u;
+          break;
+        }
       }
     }
-    // 尝试从download_addr获取更高质量视频（无水印高码率版）
+
+    // 策略3: 尝试download_addr
     if (!playUrl && video.download_addr && video.download_addr.url_list) {
       for (var di = 0; di < video.download_addr.url_list.length; di++) {
         var du = video.download_addr.url_list[di].replace(/\\u002F/g, '/');
-        du = du.replace('ratio=720p', 'ratio=1080p');
         if (du) { playUrl = du; break; }
       }
     }
+
+    // 所有URL统一升级到1080p
+    if (playUrl) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
 
     title = item.desc || (item.share_info && item.share_info.share_title) || (item.video && item.video.text) || (item.promotions && item.promotions[0] && item.promotions[0].title) || '';
     cover = (video.origin_cover && video.origin_cover.url_list && video.origin_cover.url_list[0]) || (video.cover && video.cover.url_list && video.cover.url_list[0]) || (video.dynamic_cover && video.dynamic_cover.url_list && video.dynamic_cover.url_list[0]) || '';
@@ -185,22 +215,35 @@ async function parseDouyin(originalUrl) {
         var itemData = apiJson.aweme_detail || apiJson.data || apiJson;
         if (itemData && itemData.video) {
           var v = itemData.video;
-          // API兜底同样多索引选直链CDN
-          var apiUrlList = v.play_addr && v.play_addr.url_list || [];
-          for (var ai = 0; ai < apiUrlList.length; ai++) {
-            var au = apiUrlList[ai].replace('playwm', 'play').replace(/\\u002F/g, '/');
-            au = au.replace('ratio=720p', 'ratio=1080p');
-            if (au.indexOf('aweme.snssdk.com') >= 0) {
-              if (!playUrl) playUrl = au;
-            } else {
-              playUrl = au;
-              break;
+          // API兜底同样先bit_rate选最高码率
+          if (v.bit_rate && v.bit_rate.length > 0) {
+            var apiBestBr = -1;
+            for (var bi2 = 0; bi2 < v.bit_rate.length; bi2++) {
+              var br2 = v.bit_rate[bi2];
+              var brRate2 = br2.bit_rate || 0;
+              if (brRate2 > apiBestBr) {
+                var brUrlList2 = br2.play_addr && br2.play_addr.url_list || [];
+                for (var bui2 = 0; bui2 < brUrlList2.length; bui2++) {
+                  var bu2 = brUrlList2[bui2].replace('playwm', 'play').replace(/\\u002F/g, '/');
+                  if (bu2) {
+                    apiBestBr = brRate2;
+                    playUrl = bu2;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          if (!playUrl) {
+            var apiUrlList = v.play_addr && v.play_addr.url_list || [];
+            for (var ai = 0; ai < apiUrlList.length; ai++) {
+              var au = apiUrlList[ai].replace('playwm', 'play').replace(/\\u002F/g, '/');
+              if (au) { playUrl = au; break; }
             }
           }
           if (!playUrl && v.download_addr && v.download_addr.url_list) {
             for (var di2 = 0; di2 < v.download_addr.url_list.length; di2++) {
               var du2 = v.download_addr.url_list[di2].replace(/\\u002F/g, '/');
-              du2 = du2.replace('ratio=720p', 'ratio=1080p');
               if (du2) { playUrl = du2; break; }
             }
           }
@@ -1097,6 +1140,8 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
+
 
 
 
