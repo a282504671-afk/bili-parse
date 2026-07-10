@@ -1114,6 +1114,78 @@ module.exports = async (req, res) => {
     }
 
     const targetUrl = url.searchParams.get('url') || '';
+  // ===== 调试模式 =====
+  var debug = url.searchParams.get('debug');
+  if (debug === '1' || debug === 'douyin') {
+    var dbgTargetUrl = url.searchParams.get('url') || targetUrl;
+    try {
+      var dbgItemId = extractDouyinItemId(dbgTargetUrl);
+      if (!dbgItemId) {
+        var dbgRealUrl = await resolveRedirect(dbgTargetUrl);
+        dbgItemId = extractDouyinItemId(dbgRealUrl) || extractDouyinItemId(dbgTargetUrl);
+      }
+      if (dbgItemId) {
+        var dbgFinalUrl = dbgTargetUrl;
+        var dbgShareUrl = 'https://www.iesdouyin.com/share/video/' + dbgItemId + '/';
+        var dbgResolved = await resolveRedirect(dbgShareUrl);
+        if (dbgResolved && dbgResolved.indexOf('douyin.com') >= 0) dbgFinalUrl = dbgResolved;
+
+        var dbgHtml = await fetchHtml(dbgFinalUrl || dbgTargetUrl, { Referer: 'https://www.douyin.com/' });
+        var dbgItem = extractDouyinDataFromHtml(dbgHtml);
+        
+        var dbgInfo = { itemId: dbgItemId, hasItem: !!dbgItem };
+        if (dbgItem) {
+          var v = dbgItem.video || {};
+          dbgInfo.hasDownloadAddr = !!v.download_addr;
+          dbgInfo.hasBitRate = !!(v.bit_rate && v.bit_rate.length > 0);
+          dbgInfo.bitRateCount = (v.bit_rate || []).length;
+          dbgInfo.playAddrUrlCount = (v.play_addr && v.play_addr.url_list || []).length;
+          dbgInfo.playAddrUrls = (v.play_addr && v.play_addr.url_list || []).map(function(u) { return u.replace(/\\u002F/g, '/').substring(0, 120); });
+          if (v.download_addr) {
+            dbgInfo.downloadAddrUrls = (v.download_addr.url_list || []).map(function(u) { return u.replace(/\\u002F/g, '/').substring(0, 120); });
+          }
+          if (v.bit_rate && v.bit_rate.length > 0) {
+            dbgInfo.bitRates = v.bit_rate.map(function(br) { 
+              return { gear: br.gear_name || '', bitrate: br.bit_rate || 0, urlCount: (br.play_addr && br.play_addr.url_list || []).length };
+            });
+          }
+        }
+        try {
+          var dbgApiRes = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + dbgItemId, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', 'Referer': 'https://www.douyin.com/' },
+          });
+          dbgInfo.iesdouyinApiStatus = dbgApiRes.status;
+          if (dbgApiRes.ok) {
+            var dbgApiJson = await dbgApiRes.json();
+            var dbgApiData = dbgApiJson.aweme_detail || dbgApiJson.data || dbgApiJson;
+            if (dbgApiData && dbgApiData.video) {
+              var av = dbgApiData.video;
+              dbgInfo.apiHasDownloadAddr = !!av.download_addr;
+              dbgInfo.apiHasBitRate = !!(av.bit_rate && av.bit_rate.length > 0);
+              dbgInfo.apiPlayAddrUrlCount = (av.play_addr && av.play_addr.url_list || []).length;
+              dbgInfo.apiBitRateCount = (av.bit_rate || []).length;
+              if (av.bit_rate && av.bit_rate.length > 0) {
+                dbgInfo.apiBitRates = av.bit_rate.map(function(br) { 
+                  return { gear: br.gear_name || '', bitrate: br.bit_rate || 0, urlCount: (br.play_addr && br.play_addr.url_list || []).length };
+                });
+              }
+            }
+          }
+        } catch(e) { dbgInfo.iesdouyinApiError = String(e); }
+        res.statusCode = 200;
+        res.end(JSON.stringify({ code: 200, msg: '调试信息', debug: dbgInfo }));
+        return;
+      } else {
+        res.statusCode = 200;
+        res.end(JSON.stringify({ code: 400, msg: '无法提取视频ID', debug: { targetUrl: dbgTargetUrl } }));
+        return;
+      }
+    } catch(e) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ code: 500, msg: '调试失败: ' + String(e) }));
+      return;
+    }
+  }
     if (!targetUrl) { res.statusCode = 400; res.end(JSON.stringify({ code: 400, msg: 'missing url' })); return; }
 
     const platform = detectPlatform(targetUrl);
@@ -1137,6 +1209,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
