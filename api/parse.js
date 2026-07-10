@@ -84,62 +84,153 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
-  var realUrl = await resolveRedirect(originalUrl);
-  var itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
-  if (!itemId) return fail('未能从链接中提取视频ID');
+  // 解析item_id
+  var itemId = extractDouyinItemId(originalUrl);
+  var realUrl = originalUrl;
+
+  // 先尝试通过iesdouyin.com/share/video/获取真实douyin.com链接（比v.douyin.com跳转更可靠）
+  if (itemId) {
+    var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
+    var resolvedUrl = await resolveRedirect(shareUrl);
+    if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
+  } else {
+    realUrl = await resolveRedirect(originalUrl);
+    itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
+    if (!itemId) return fail('未能从链接中提取视频ID');
+    var shareUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
+    var resolvedUrl = await resolveRedirect(shareUrl);
+    if (resolvedUrl && resolvedUrl.indexOf('douyin.com') >= 0) realUrl = resolvedUrl;
+  }
 
   var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
   var item = extractDouyinDataFromHtml(html);
-  if (!item) return fail('从页面HTML提取视频数据失败，item_id=' + itemId);
 
-  var video = item.video || {};
-  var author = item.author || {};
-  var playUrl = (video.play_addr && video.play_addr.url_list && video.play_addr.url_list[0]) || '';
-  if (playUrl) {
-    playUrl = playUrl.replace('playwm', 'play').replace(/\\u002F/g, '/');
-    // 升级到1080p
-    playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
+  var video = (item && item.video) || {};
+  var author = (item && item.author) || {};
+  var playUrl = '';
+  var title = '';
+  var cover = '';
+  var authorName = '';
+  var authorId = '';
+  var avatar = '';
+  var images = [];
+
+  // ===== 从HTML item_list提取数据 =====
+  if (item) {
+    // 多索引URL选择：遍历play_addr.url_list所有URL，优先选非aweme.snssdk.com的直链CDN
+    var urlList = video.play_addr && video.play_addr.url_list || [];
+    for (var ui = 0; ui < urlList.length; ui++) {
+      var u = urlList[ui].replace('playwm', 'play').replace(/\\u002F/g, '/');
+      u = u.replace('ratio=720p', 'ratio=1080p');
+      // 优先选择365yg.com/tos-cn等直接CDN链接（画质更好），其次aweme.snssdk.com
+      if (u.indexOf('aweme.snssdk.com') >= 0) {
+        if (!playUrl) playUrl = u;
+      } else {
+        playUrl = u; // 非aweme的URL优先使用
+        break;
+      }
+    }
+    // 尝试从download_addr获取更高质量视频（无水印高码率版）
+    if (!playUrl && video.download_addr && video.download_addr.url_list) {
+      for (var di = 0; di < video.download_addr.url_list.length; di++) {
+        var du = video.download_addr.url_list[di].replace(/\\u002F/g, '/');
+        du = du.replace('ratio=720p', 'ratio=1080p');
+        if (du) { playUrl = du; break; }
+      }
+    }
+
+    title = item.desc || (item.share_info && item.share_info.share_title) || (item.video && item.video.text) || (item.promotions && item.promotions[0] && item.promotions[0].title) || '';
+    cover = (video.origin_cover && video.origin_cover.url_list && video.origin_cover.url_list[0]) || (video.cover && video.cover.url_list && video.cover.url_list[0]) || (video.dynamic_cover && video.dynamic_cover.url_list && video.dynamic_cover.url_list[0]) || '';
+    authorName = author.nickname || '';
+    authorId = author.unique_id || author.short_id || author.uid || '';
+    avatar = (author.avatar_larger && author.avatar_larger.url_list && author.avatar_larger.url_list[0]) || (author.avatar_medium && author.avatar_medium.url_list && author.avatar_medium.url_list[0]) || (author.avatar_thumb && author.avatar_thumb.url_list && author.avatar_thumb.url_list[0]) || '';
+    images = (item.images || []).map(function(img) { return img.url_list && img.url_list[0]; }).filter(Boolean);
   }
 
   // og:title 兜底
-  if (!item.desc && !(item.share_info && item.share_info.share_title)) {
+  if (!title) {
     var ogTitle = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
     if (ogTitle && ogTitle[1] && ogTitle[1].indexOf('抖音') < 0 && ogTitle[1].indexOf('douyin') < 0) {
-      item.desc = ogTitle[1];
+      title = ogTitle[1];
     }
   }
 
-  var images = (item.images || []).map(function(img) { return img.url_list && img.url_list[0]; }).filter(Boolean);
-
-  // 
+  // ===== HTML正则兜底 =====
   if (!playUrl) {
     var ogV = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]+)"/);
     if (ogV) playUrl = ogV[1];
     if (!playUrl) {
-      var videoUrlMatch = html.match(/"playAddr":\s*"([^"]+)"/) || html.match(/"srcUrl":\s*"([^"]+)"/) || html.match(/"video_url":\s*"([^"]+)"/);
+      var videoUrlMatch = html.match(/"playAddr":\s*"([^"]+)"/) || html.match(/"srcUrl":\s*"([^"]+)"/) || html.match(/"video_url":\s*"([^"]+)"/) || html.match(/"play_url":\s*"([^"]+)"/);
       if (videoUrlMatch) playUrl = videoUrlMatch[1].replace(/\\u002F/g, '/');
     }
   }
 
+  if (!cover) {
+    var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
+    if (ogI) cover = ogI[1];
+  }
+
+  // ===== iesdouyin API 兜底（HTML没提取到playUrl时直接调API获取更高质量视频地址） =====
+  if (!playUrl) {
+    try {
+      var apiRes = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + itemId, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://www.douyin.com/',
+          'Accept': 'application/json,text/html,application/xhtml+xml',
+        },
+      });
+      if (apiRes.ok) {
+        var apiJson = await apiRes.json();
+        var itemData = apiJson.aweme_detail || apiJson.data || apiJson;
+        if (itemData && itemData.video) {
+          var v = itemData.video;
+          // API兜底同样多索引选直链CDN
+          var apiUrlList = v.play_addr && v.play_addr.url_list || [];
+          for (var ai = 0; ai < apiUrlList.length; ai++) {
+            var au = apiUrlList[ai].replace('playwm', 'play').replace(/\\u002F/g, '/');
+            au = au.replace('ratio=720p', 'ratio=1080p');
+            if (au.indexOf('aweme.snssdk.com') >= 0) {
+              if (!playUrl) playUrl = au;
+            } else {
+              playUrl = au;
+              break;
+            }
+          }
+          if (!playUrl && v.download_addr && v.download_addr.url_list) {
+            for (var di2 = 0; di2 < v.download_addr.url_list.length; di2++) {
+              var du2 = v.download_addr.url_list[di2].replace(/\\u002F/g, '/');
+              du2 = du2.replace('ratio=720p', 'ratio=1080p');
+              if (du2) { playUrl = du2; break; }
+            }
+          }
+          if (!title) title = itemData.desc || itemData.share_info && itemData.share_info.share_title || '';
+          if (!cover) cover = (v.origin_cover && v.origin_cover.url_list && v.origin_cover.url_list[0]) || (v.cover && v.cover.url_list && v.cover.url_list[0]) || '';
+          if (!authorName) authorName = (itemData.author && itemData.author.nickname) || '';
+          if (!authorId) authorId = (itemData.author && (itemData.author.unique_id || itemData.author.short_id || itemData.author.uid)) || '';
+          if (!avatar) avatar = (itemData.author && itemData.author.avatar_larger && itemData.author.avatar_larger.url_list && itemData.author.avatar_larger.url_list[0]) || (itemData.author && itemData.author.avatar_medium && itemData.author.avatar_medium.url_list && itemData.author.avatar_medium.url_list[0]) || '';
+        }
+      }
+    } catch(e) {}
+  }
+
+  // 最后确保aweme.snssdk.com也升级到1080p
   if (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0) {
     playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
   }
+
   return ok('douyin', {
     type: images.length ? 'image' : 'video',
-    title: item.desc || (item.share_info && item.share_info.share_title) || item.video && item.video.text || (item.promotions && item.promotions[0] && item.promotions[0].title) || '',
-    desc: item.desc || '',
-    author: {
-      name: author.nickname || '',
-      id: author.unique_id || author.short_id || author.uid || '',
-      avatar: (author.avatar_larger && author.avatar_larger.url_list && author.avatar_larger.url_list[0]) || (author.avatar_medium && author.avatar_medium.url_list && author.avatar_medium.url_list[0]) || (author.avatar_thumb && author.avatar_thumb.url_list && author.avatar_thumb.url_list[0]) || '',
-    },
-    cover: (video.origin_cover && video.origin_cover.url_list && video.origin_cover.url_list[0]) || (video.cover && video.cover.url_list && video.cover.url_list[0]) || (video.dynamic_cover && video.dynamic_cover.url_list && video.dynamic_cover.url_list[0]) || '',
+    title: title,
+    desc: title || '',
+    author: { name: authorName, id: authorId, avatar: avatar },
+    cover: cover,
     url: playUrl,
     images: images,
   });
 }
 
-// ===== Bվ=====
+
 async function parseBilibili(originalUrl) {
   var realUrl = originalUrl;
   if (realUrl.includes('b23.tv')) realUrl = await resolveRedirect(realUrl);
@@ -1006,6 +1097,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
