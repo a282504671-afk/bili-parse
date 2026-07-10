@@ -1,11 +1,11 @@
 const UA = 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 const UA_WECHAT = 'Mozilla/5.0 (Linux; Android 12; Pixel 6 Build/SQ3A.220705.003.A1) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/107.0.5304.141 Mobile Safari/537.36 XWEB/5060 MMWEBSDK/20221206 MMWEBID/8060 MicroMessenger/8.0.32.2380(0x28002034) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64';
 
-// 骞冲彴涓枃鍚嶇О鏄犲皠
+// 平台中文名称映射
 const PLATFORM_NAMES = {
   douyin: '抖音',
   tiktok: 'TikTok',
-  bilibili: 'Bվ',
+  bilibili: 'bilibili',
   acfun: 'AcFun',
   ixigua: '西瓜视频',
   kuaishou: '快手',
@@ -95,7 +95,11 @@ async function parseDouyin(originalUrl) {
   var video = item.video || {};
   var author = item.author || {};
   var playUrl = (video.play_addr && video.play_addr.url_list && video.play_addr.url_list[0]) || '';
-  if (playUrl) playUrl = playUrl.replace('playwm', 'play').replace(/\\u002F/g, '/');
+  if (playUrl) {
+    playUrl = playUrl.replace('playwm', 'play').replace(/\\u002F/g, '/');
+    // 升级到1080p
+    playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
+  }
 
   // og:title 兜底
   if (!item.desc && !(item.share_info && item.share_info.share_title)) {
@@ -117,6 +121,9 @@ async function parseDouyin(originalUrl) {
     }
   }
 
+  if (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0) {
+    playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
+  }
   return ok('douyin', {
     type: images.length ? 'image' : 'video',
     title: item.desc || (item.share_info && item.share_info.share_title) || item.video && item.video.text || (item.promotions && item.promotions[0] && item.promotions[0].title) || '',
