@@ -533,7 +533,9 @@ async function parseKuaishou(originalUrl) {
       if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
       if (tMatch) title = tMatch[1];
     }
-    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images || [] }; 
+    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images || [] };
+  }
+
   function fillAvatarIfMissing(author, html) {
     if (!author || author.avatar) return author;
     var av = html.match(/"avatar"\s*:\s*"([^"]+)"/) || html.match(/"headUrl"\s*:\s*"([^"]+)"/) || html.match(/"userAvatar"\s*:\s*"([^"]+)"/) || html.match(/"headerUrl"\s*:\s*"([^"]+)"/);
@@ -595,7 +597,7 @@ async function parseKuaishou(originalUrl) {
   }
 
     var video = extractVideo(html);
-  function deepFindImages(obj, depth) {
+  var deepFindImages = function(obj, depth) {
     if (!obj || typeof obj !== 'object' || depth > 8) return null;
     if (obj.images && Array.isArray(obj.images) && obj.images.length) {
       var urls = obj.images.filter(function(v) { return typeof v === 'string' && v.length > 20; });
@@ -613,7 +615,7 @@ async function parseKuaishou(originalUrl) {
     return null;
   }
   if (!video.images || !video.images.length) {
-    var nextMatchData = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([sS]*?)</script>/);
+    var nextMatchData = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*??)</script>/);
     if (nextMatchData) {
       try {
         var nd = JSON.parse(nextMatchData[1].replace(/undefined/g, 'null'));
@@ -1410,6 +1412,8 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
+
 
 
 
