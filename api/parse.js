@@ -620,6 +620,24 @@ async function parseKuaishou(originalUrl) {
 
 
 // ===== 抖音笔记/图集解析 =====
+function extractRENDER_DATA(html) {
+  if (!html) return null;
+  var patterns = ['id="RENDER_DATA"', "id='RENDER_DATA'", 'id="__RENDER_DATA__"', "id='__RENDER_DATA__'", 'id="__NEXT_DATA__"'];
+  for (var pi = 0; pi < patterns.length; pi++) {
+    var idx = html.indexOf(patterns[pi]);
+    if (idx >= 0) {
+      var start = html.indexOf('>', idx) + 1;
+      if (start > 0) {
+        var end = html.indexOf('</script>', start);
+        if (end > start) {
+          return [null, html.substring(start, end)];
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function parseDouyinNote(noteId) {
 var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", images = [], videoUrl = "", videoList = [];
 
@@ -701,7 +719,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
   var noteUrl = "https://www.douyin.com/note/" + noteId + "/";
   var html;
   try { html = await fetchHtml(noteUrl, { Referer: "https://www.douyin.com/" }); } catch(e) { if (images.length > 0 || videoUrl) { return { type: videoUrl ? "video" : "image", title: title, desc: title || "", author: { name: authorName, id: authorId, avatar: authorAvatar }, cover: cover, url: videoUrl || "", images: images, videoList: videoList }; } return null; }
-  var rdMatch = html.match(/id=["']RENDER_DATA["'][^>]*>([^<]+)</script>/);
+  var rdMatch = extractRENDER_DATA(html);
   if (rdMatch) {
     try {
       var decoded = decodeURIComponent(rdMatch[1]);
