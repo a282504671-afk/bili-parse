@@ -59,6 +59,8 @@ function extractDouyinItemId(url) {
   if (m) return m[1];
   m = url.match(/\/note\/(\d{6,})/);
   if (m) return m[1];
+  m = url.match(/\/slides\/(\d{6,})/);
+  if (m) return m[1];
   m = url.match(/aweme_id=(\d+)/);
   if (m) return m[1];
   return null;
@@ -107,7 +109,7 @@ async function parseDouyin(originalUrl) {
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
     // 重定向后重新检测是否为笔记/图集
-    if (realUrl.indexOf("/note/") >= 0) {
+    if (realUrl.indexOf("/note/") >= 0 || realUrl.indexOf("/slides/") >= 0) {
       var noteResult = await parseDouyinNote(itemId);
       if (noteResult) return ok("douyin", noteResult);
     }
