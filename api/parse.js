@@ -57,6 +57,8 @@ function extractDouyinItemId(url) {
   if (m) return m[1];
   m = url.match(/modal_id=(\d{6,})/);
   if (m) return m[1];
+  m = url.match(/\/note\/(\d{6,})/);
+  if (m) return m[1];
   m = url.match(/aweme_id=(\d+)/);
   if (m) return m[1];
   return null;
@@ -84,9 +86,17 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
+  // 检查是否为笔记/图集页面
+  var isNote = originalUrl.indexOf("/note/") >= 0;
   // 解析item_id
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
+
+  if (isNote && itemId) {
+    var noteResult = await parseDouyinNote(itemId);
+    if (noteResult) return ok("douyin", noteResult);
+    // 如果笔记解析失败，退回视频解析流程
+  }
 
   if (itemId) {
     // 关键：直接用iesdouyin.com/share/video/页面提取数据（不跟redirect）
@@ -600,6 +610,79 @@ async function parseKuaishou(originalUrl) {
     url: video.videoUrl || '',
     images: []
   });
+}
+
+
+
+// ===== 抖音笔记/图集解析 =====
+async function parseDouyinNote(noteId) {
+  var noteUrl = "https://www.douyin.com/note/" + noteId + "/";
+  var html;
+  try { html = await fetchHtml(noteUrl, { Referer: "https://www.douyin.com/" }); } catch(e) { return null; }
+  var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", images = [], videoUrl = "";
+  var rdMatch = html.match(/id=["']RENDER_DATA["'][^>]*>([^<]+)<\/script>/);
+  if (rdMatch) {
+    try {
+      var decoded = decodeURIComponent(rdMatch[1]);
+      var state = JSON.parse(decoded);
+      var noteDetail = state && state.note && state.note.noteDetailMap;
+      if (noteDetail) {
+        var keys = Object.keys(noteDetail);
+        if (keys.length) {
+          var note = noteDetail[keys[0]] && noteDetail[keys[0]].note;
+          if (note) {
+            if (!title) title = note.title || note.desc || "";
+            if (!authorName) authorName = (note.user && note.user.nickname) || "";
+            if (!authorAvatar) authorAvatar = (note.user && note.user.avatar) || "";
+            if (!authorId) authorId = (note.user && note.user.userId) || "";
+            if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || "";
+            if (note.imageList && note.imageList.length) {
+              note.imageList.forEach(function(img) {
+                var imgUrl = img.urlDefault || img.url || "";
+                if (imgUrl) images.push(imgUrl);
+              });
+            }
+            // Extract audio/music for image albums
+            var audioUrl = "";
+            if (note.music && note.music.playUrl) {
+              var muList = note.music.playUrl.urlList || note.music.playUrl.url_list || [];
+              if (muList.length > 0) audioUrl = muList[0];
+            }
+            if (!audioUrl && note.music && note.music.mid) {
+              audioUrl = "https://sf6-cdn-tos.douyinstatic.com/obj/" + note.music.mid;
+            }
+            // Extract video from note (animated/effect notes)
+            if (note.video && note.video.media && note.video.media.stream) {
+              var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
+              for (var ci = 0; ci < candidates.length; ci++) {
+                var cdd = candidates[ci];
+                var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []);
+                for (var ui = 0; ui < urls.length; ui++) {
+                  if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0 || urls[ui].indexOf(".zjcdn.com") > 0 || urls[ui].indexOf(".douyinvod") > 0)) {
+                    videoUrl = urls[ui]; break;
+                  }
+                }
+                if (videoUrl) break;
+              }
+              if (!videoUrl && candidates.length > 0) {
+                videoUrl = candidates[0].masterUrl || candidates[0].url || "";
+              }
+            }
+            // If no video but has audio, use audioUrl for background playback
+            if (!videoUrl && audioUrl) {
+              videoUrl = audioUrl;
+            }
+          }
+        }
+      }
+    } catch(e) {}
+  }
+  if (images.length > 0 || videoUrl) {
+    return { type: videoUrl ? "video" : "image", title: title, desc: title || "",
+      author: { name: authorName, id: authorId, avatar: authorAvatar },
+      cover: cover, url: videoUrl || "", images: images };
+  }
+  return null;
 }
 
 // ===== 小红书=====
