@@ -337,7 +337,7 @@ async function parseBilibili(originalUrl) {
     }
   } catch(e) {}
 
-  // 方式2: 直连失败 → 通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK，用户家庭IP 不可见）
+  // 方式2: 直连失败 鈫?通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK锛岀敤鎴峰搴?IP 不可见）
   if (!info || !videoUrl) {
     try {
       var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
@@ -425,7 +425,7 @@ async function parseBilibili(originalUrl) {
   return ok('bilibili', {
     type: 'video', title: info.title || '', desc: info.desc || '',
     author: { name: (info.owner && info.owner.name) || '', id: (info.owner && info.owner.mid && String(info.owner.mid)) || '', avatar: (info.owner && info.owner.face) || '' },
-    cover: info.pic || '', url: videoUrl || '', images: [],
+    cover: info.pic || '', url: videoUrl || '', images: video.images && video.images.length > 0 ? video.images : [],
   });
 }
 
@@ -439,7 +439,7 @@ async function parseKuaishou(originalUrl) {
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
 
   // ===== 占位/无效昵称识别 =====
-  // 黑名单：快手/上游接口常见的匿名占位昵称
+  // 黑名单：快手/上游接口常见的匿名占位名称
   var BAD_NAMES = ['快手用户', '神秘人', '热门用户', '已注销', '账号已注销', '未知用户', '佚名', 'kwai user', 'KuaiShou User', 'null', 'undefined'];
   // 
   var GARBAGE_PATTERN = /^[\?？\uFFFD\*\-_=.\s]+$/;
@@ -453,7 +453,7 @@ async function parseKuaishou(originalUrl) {
   };
   var isValidName = function (v) { return !isGarbageName(v); };
 
-  // 还原 \uXXXX 转义与常见HTML实体，避免昵称显示乱码
+  // 还原 \uXXXX 转义与常见HTML实体，避免名称显示乱码
   function decodeText(s) {
     if (!s) return s;
     try {
@@ -484,7 +484,7 @@ async function parseKuaishou(originalUrl) {
 
   // 
   function extractVideo(html) {
-    var videoUrl = '', title = '', cover = '', images = [];
+    var videoUrl = '', title = '', cover = '', images = []
     var imgArrMatch = html.match(/"images"\s*:\s*\[/);
     if (imgArrMatch) {
       var imgStart = imgArrMatch.index;
@@ -533,10 +533,7 @@ async function parseKuaishou(originalUrl) {
       if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
       if (tMatch) title = tMatch[1];
     }
-    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images || [] };
-  }
-
-  // 
+    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images || [] }; 
   function fillAvatarIfMissing(author, html) {
     if (!author || author.avatar) return author;
     var av = html.match(/"avatar"\s*:\s*"([^"]+)"/) || html.match(/"headUrl"\s*:\s*"([^"]+)"/) || html.match(/"userAvatar"\s*:\s*"([^"]+)"/) || html.match(/"headerUrl"\s*:\s*"([^"]+)"/);
@@ -544,7 +541,7 @@ async function parseKuaishou(originalUrl) {
     return author;
   }
 
-  // ===== __NEXT_DATA__ 深度结构化搜索（精准定位，跳过评论/音乐/推荐节点）=====
+// ===== __NEXT_DATA__ 深度结构化搜索（精确定位，跳过评论/音乐/推荐节点）=====
   function deepFindAuthorInJSON(obj, depth) {
     if (!obj || typeof obj !== 'object' || depth > 15) return null;
     var author = validAuthor(obj);
@@ -597,36 +594,34 @@ async function parseKuaishou(originalUrl) {
     return validAuthor({ id: m[1], name: name });
   }
 
-  var video = extractVideo(html);
+    var video = extractVideo(html);
+  function deepFindImages(obj, depth) {
+    if (!obj || typeof obj !== 'object' || depth > 8) return null;
+    if (obj.images && Array.isArray(obj.images) && obj.images.length) {
+      var urls = obj.images.filter(function(v) { return typeof v === 'string' && v.length > 20; });
+      if (urls.length) return urls;
+    }
+    if (obj.imageList && Array.isArray(obj.imageList) && obj.imageList.length) {
+      var urlList = obj.imageList.map(function(v) { return v.url || v.urlDefault || (typeof v === 'string' ? v : ''); }).filter(function(u) { return u && u.length > 10; });
+      if (urlList.length) return urlList;
+    }
+    for (var k in obj) {
+      if (k === 'comment' || k === 'comments' || k === 'feed' || k === 'related' || k === 'music') continue;
+      var r = deepFindImages(obj[k], depth + 1);
+      if (r) return r;
+    }
+    return null;
+  }
   if (!video.images || !video.images.length) {
-    var nextMatchData = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    var nextMatchData = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([sS]*?)</script>/);
     if (nextMatchData) {
       try {
         var nd = JSON.parse(nextMatchData[1].replace(/undefined/g, 'null'));
-        function deepFindImages(obj, depth) {
-          if (!obj || typeof obj !== 'object' || depth > 8) return null;
-          if (obj.images && Array.isArray(obj.images) && obj.images.length) {
-            var urls = obj.images.filter(function(v) { return typeof v === 'string' && v.length > 20; });
-            if (urls.length) return urls;
-          }
-          if (obj.imageList && Array.isArray(obj.imageList) && obj.imageList.length) {
-            var urlList = obj.imageList.map(function(v) { return v.url || v.urlDefault || (typeof v === 'string' ? v : ''); }).filter(function(u) { return u && u.length > 10; });
-            if (urlList.length) return urlList;
-          }
-          for (var k in obj) {
-            if (k === 'comment' || k === 'comments' || k === 'feed' || k === 'related' || k === 'music') continue;
-            var r = deepFindImages(obj[k], depth + 1);
-            if (r) return r;
-          }
-          return null;
-        }
         var found = deepFindImages(nd, 0);
         if (found) video.images = found;
       } catch(e) {}
     }
-  }
-
-  var finalAuthor = null;
+  }  var finalAuthor = null;
 
   // 
   finalAuthor = findFromNextData(html);
@@ -911,7 +906,7 @@ async function parseTiktok(originalUrl) {
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
-  // tikwm.com 兜底（解决非浏览器请求403 问题）
+  // tikwm.com 兜底（解决非浏览器请求 403 问题）
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -1415,6 +1410,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
