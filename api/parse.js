@@ -734,6 +734,28 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
         var itemData = apiJson2.aweme_detail || apiJson2.data || apiJson2;
         if (itemData && itemData.images && itemData.images.length) {
           itemData.images.forEach(function(img) {
+            // Extract embedded video from each image item (for 动图/mixed works)
+            if (img.video && img.video.media && img.video.media.stream) {
+              var vidCandidates = img.video.media.stream.h264 || img.video.media.stream.h265 || [];
+              var foundVid = '';
+              for (var vi = 0; vi < vidCandidates.length; vi++) {
+                var vc = vidCandidates[vi];
+                var vUrls = [vc.masterUrl, vc.url].concat(vc.backupUrls || []);
+                for (var vu = 0; vu < vUrls.length; vu++) {
+                  if (vUrls[vu] && (vUrls[vu].indexOf("sns-video-zl") > 0 || vUrls[vu].indexOf("sns-video-hw") > 0 || vUrls[vu].indexOf('.zjcdn.com') > 0 || vUrls[vu].indexOf('.douyinvod') > 0 || vUrls[vu].indexOf('365yg.com') > 0 || vUrls[vu].indexOf('ixigua.com') > 0)) {
+                    foundVid = vUrls[vu]; break;
+                  }
+                }
+                if (foundVid) break;
+              }
+              if (!foundVid && vidCandidates.length > 0) {
+                foundVid = vidCandidates[0].masterUrl || vidCandidates[0].url || '';
+              }
+              if (foundVid) {
+                videoList.push(foundVid);
+                if (!videoUrl) videoUrl = foundVid;
+              }
+            }
             var imgUrl = img.url_list && img.url_list[0];
             if (imgUrl && images.indexOf(imgUrl) < 0) images.push(imgUrl);
           });
@@ -827,52 +849,44 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
     } catch(e) {}
   }
   }
-  // Step 4: BugPK fallback for douyin notes (contains live_photo with video URLs)
+    // Step 4: BugPK fallback for douyin notes (with retry)
   if (!videoList.length) {
-    try {
-      var bpNoteUrl3 = "https://www.douyin.com/note/" + noteId + "/";
-      var bpRes3 = await fetch("https://api.bugpk.com/api/short_videos?url=" + encodeURIComponent(bpNoteUrl3), {
-        headers: { "User-Agent": UA, "Accept": "application/json" },
-      });
-      if (bpRes3.ok) {
-        var bpJson3 = await bpRes3.json();
-        if (bpJson3.code === 200 && bpJson3.data) {
-          if (bpJson3.data.live_photo && bpJson3.data.live_photo.length) {
-            bpJson3.data.live_photo.forEach(function(lp) {
-              if (lp.video && videoList.indexOf(lp.video) < 0) {
-                videoList.push(lp.video);
-                if (!videoUrl) videoUrl = lp.video;
-              }
-              if (lp.image && images.indexOf(lp.image) < 0) images.push(lp.image);
-            });
-          }
-          // BugPK author/title/cover extraction (check multiple paths)
-          if (!title && (bpJson3.data.title || bpJson3.data.desc)) title = bpJson3.data.title || bpJson3.data.desc || '';
-          if (!cover && bpJson3.data.cover) cover = bpJson3.data.cover;
-          var bpAuthor = bpJson3.data.author || bpJson3.data.extra || (bpJson3.data.music || {}).author || {};
-          if (!authorName) authorName = bpAuthor.name || bpAuthor.nickname || bpAuthor.nickName || (typeof bpAuthor === 'string' ? bpAuthor : '') || '';
-          if (!authorId) authorId = String(bpAuthor.id || bpAuthor.uid || bpAuthor.user_id || bpAuthor.unique_id || (bpJson3.data.extra && bpJson3.data.extra.unique_id) || '');
-          if (!authorAvatar) authorAvatar = bpAuthor.avatar || bpAuthor.avatar_larger || bpAuthor.headUrl || '';
-          // Also check top-level extra fields
-          if (!authorId && bpJson3.data.extra && bpJson3.data.extra.aweme_id) authorId = String(bpJson3.data.extra.aweme_id);
-          if (!title && bpJson3.data.extra && bpJson3.data.extra.share_url) {
-            // Try music author if available
-            if (bpJson3.data.music && bpJson3.data.music.author) {
-              if (!authorName) authorName = bpJson3.data.music.author;
+    for (var bpri = 0; bpri < 3 && !videoList.length; bpri++) {
+      try {
+        var bpNoteUrl = "https://www.douyin.com/note/" + noteId + "/";
+        var bpRes3 = await fetch("https://api.bugpk.com/api/short_videos?url=" + encodeURIComponent(bpNoteUrl), {
+          headers: { "User-Agent": UA, "Accept": "application/json" },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (bpRes3.ok) {
+          var bpJson3 = await bpRes3.json();
+          if (bpJson3.code === 200 && bpJson3.data) {
+            if (bpJson3.data.live_photo && bpJson3.data.live_photo.length) {
+              bpJson3.data.live_photo.forEach(function(lp) {
+                if (lp.video && videoList.indexOf(lp.video) < 0) {
+                  videoList.push(lp.video);
+                  if (!videoUrl) videoUrl = lp.video;
+                }
+                if (lp.image && images.indexOf(lp.image) < 0) images.push(lp.image);
+              });
+            }
+            if (!title && (bpJson3.data.title || bpJson3.data.desc)) title = bpJson3.data.title || bpJson3.data.desc || "";
+            if (!cover && bpJson3.data.cover) cover = bpJson3.data.cover;
+            var bpA = bpJson3.data.author || bpJson3.data.extra || {};
+            if (!authorName) authorName = bpA.name || bpA.nickname || "";
+            if (!authorId) authorId = String(bpA.id || bpA.uid || "");
+            if (!authorAvatar) authorAvatar = bpA.avatar || "";
+            if (!videoUrl && bpJson3.data.url && bpJson3.data.url.indexOf("aweme.snssdk.com") < 0) videoUrl = bpJson3.data.url;
+            if (bpJson3.data.images && bpJson3.data.images.length) {
+              bpJson3.data.images.forEach(function(img) {
+                if (img && images.indexOf(img) < 0) images.push(img);
+              });
             }
           }
-          if (!videoUrl && bpJson3.data.url && bpJson3.data.url.indexOf("aweme.snssdk.com") < 0) videoUrl = bpJson3.data.url;
-          if (bpJson3.data.images && bpJson3.data.images.length) {
-            bpJson3.data.images.forEach(function(img) {
-              if (img && images.indexOf(img) < 0) images.push(img);
-            });
-          }
         }
-      }
-    } catch(e) {}
+      } catch(e) {}
+    }
   }
-
-
   if (images.length > 0 || videoUrl) {
     return { type: videoUrl ? "video" : "image", title: title, desc: title || "",
       author: { name: authorName, id: authorId, avatar: authorAvatar },
