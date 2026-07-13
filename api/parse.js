@@ -106,6 +106,11 @@ async function parseDouyin(originalUrl) {
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
+    // 重定向后重新检测是否为笔记/图集
+    if (realUrl.indexOf("/note/") >= 0) {
+      var noteResult = await parseDouyinNote(itemId);
+      if (noteResult) return ok("douyin", noteResult);
+    }
     realUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
   }
 
