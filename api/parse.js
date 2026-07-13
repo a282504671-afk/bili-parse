@@ -42,11 +42,44 @@ async function resolveRedirect(url) {
 }
 
 async function fetchHtml(url, extraHeaders = {}) {
-  const res = await fetch(url, {
+  // First request - get cookies from Set-Cookie
+  const res1 = await fetch(url, {
     headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'zh-CN,zh;q=0.9', ...extraHeaders },
+    redirect: 'manual',
   });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return await res.text();
+  var cookies = '';
+  if (res1.headers) {
+    const setCookie = res1.headers.get('Set-Cookie');
+    if (setCookie) cookies = setCookie.split(';')[0];
+  }
+  var text = await res1.text();
+  
+  // Check if page has obfuscated JS (anti-bot) - need second request with cookies
+  if (text.indexOf('_$jsvmprt') >= 0 && cookies) {
+    const res2 = await fetch(url, {
+      headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'zh-CN,zh;q=0.9', 'Cookie': cookies, ...extraHeaders },
+      redirect: 'follow',
+    });
+    if (res2.ok) {
+      text = await res2.text();
+    }
+  }
+  
+  // Try a third retry as simple follow-redirect
+  if (text.indexOf('reload') >= 0 && text.indexOf('_$jsvmprt') >= 0) {
+    try {
+      const res3 = await fetch(url, {
+        headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'zh-CN,zh;q=0.9', ...extraHeaders },
+        redirect: 'follow',
+      });
+      if (res3.ok) {
+        const text3 = await res3.text();
+        if (text3.indexOf('_$jsvmprt') < 0) text = text3;
+      }
+    } catch(e) {}
+  }
+  
+  return text;
 }
 
 // ===== 抖音 =====
@@ -337,7 +370,7 @@ async function parseBilibili(originalUrl) {
     }
   } catch(e) {}
 
-  // 方式2: 直连失败 鈫?通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK锛岀敤鎴峰搴?IP 不可见）
+  // 方式2: 直连失败 -> 通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK，用户家庭IP不可见）
   if (!info || !videoUrl) {
     try {
       var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
@@ -425,7 +458,7 @@ async function parseBilibili(originalUrl) {
   return ok('bilibili', {
     type: 'video', title: info.title || '', desc: info.desc || '',
     author: { name: (info.owner && info.owner.name) || '', id: (info.owner && info.owner.mid && String(info.owner.mid)) || '', avatar: (info.owner && info.owner.face) || '' },
-    cover: info.pic || '', url: videoUrl || '', images: video.images && video.images.length > 0 ? video.images : [],
+    cover: info.pic || '', url: videoUrl || '', images: [],
   });
 }
 
@@ -439,7 +472,7 @@ async function parseKuaishou(originalUrl) {
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
 
   // ===== 占位/无效昵称识别 =====
-  // 黑名单：快手/上游接口常见的匿名占位名称
+  // 黑名单：快手/上游接口常见的匿名占位阵形
   var BAD_NAMES = ['快手用户', '神秘人', '热门用户', '已注销', '账号已注销', '未知用户', '佚名', 'kwai user', 'KuaiShou User', 'null', 'undefined'];
   // 
   var GARBAGE_PATTERN = /^[\?？\uFFFD\*\-_=.\s]+$/;
@@ -453,7 +486,7 @@ async function parseKuaishou(originalUrl) {
   };
   var isValidName = function (v) { return !isGarbageName(v); };
 
-  // 还原 \uXXXX 转义与常见HTML实体，避免名称显示乱码
+  // 还原 \uXXXX 转义与常见 HTML 实体，避免阵形显示乱码
   function decodeText(s) {
     if (!s) return s;
     try {
@@ -484,7 +517,13 @@ async function parseKuaishou(originalUrl) {
 
   // 
   function extractVideo(html) {
-    var videoUrl = '', title = '', cover = '', images = []
+    var videoUrl = '', title = '', cover = '', images = [];
+    var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url="([^"]+)"/, /data-url="([^"']+)"/];
+    for (var i = 0; i < patterns.length; i++) {
+      var m = html.match(patterns[i]);
+      if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
+    }
+    // Extract images from HTML for Kuaishou albums
     var imgArrMatch = html.match(/"images"\s*:\s*\[/);
     if (imgArrMatch) {
       var imgStart = imgArrMatch.index;
@@ -509,10 +548,47 @@ async function parseKuaishou(originalUrl) {
         }
       }
     }
-    var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url="([^"]+)"/, /data-url="([^"']+)"/];
-    for (var i = 0; i < patterns.length; i++) {
-      var m = html.match(patterns[i]);
-      if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
+    if (!images || !images.length) {
+      var photoUrlsMatch = html.match(/"photoUrls"\s*:\s*\[/);
+      if (photoUrlsMatch) {
+        var puStart = photoUrlsMatch.index;
+        var puEnd = html.indexOf(']', puStart);
+        if (puEnd > puStart) {
+          try { images = JSON.parse(html.substring(puStart, puEnd + 1)).filter(function(u) { return typeof u === 'string' && u.length > 20; }); } catch(e) {}
+        }
+      }
+    }
+    if (!images || !images.length) {
+      var resourceUrlsMatch = html.match(/"resourceUrls"\s*:\s*\[/);
+      if (resourceUrlsMatch) {
+        var ruStart = resourceUrlsMatch.index;
+        var ruEnd = html.indexOf(']', ruStart);
+        if (ruEnd > ruStart) {
+          try { images = JSON.parse(html.substring(ruStart, ruEnd + 1)).filter(function(u) { return typeof u === 'string' && u.length > 20; }); } catch(e) {}
+        }
+      }
+    }
+    if (!images || !images.length) {
+      var photosMatch = html.match(/"photos"\s*:\s*\[/);
+      if (photosMatch) {
+        var phStart = photosMatch.index;
+        var phEnd = html.indexOf(']', phStart);
+        if (phEnd > phStart) {
+          try {
+            var rawPhotos = JSON.parse(html.substring(phStart, phEnd + 1).replace(/undefined/g, 'null'));
+            images = rawPhotos.map(function(item) {
+              if (typeof item === 'string') return item;
+              return item.url || item.originUrl || item.thumbnail || '';
+            }).filter(function(u) { return u && u.length > 10; });
+          } catch(e) {}
+        }
+      }
+    }
+    if (!images || !images.length) {
+      var cdnImages = html.match(/https?:\/\/[^"'\s]*?(?:\.jpg|\.png|\.webp|\.jpeg)[^"'\s]*?(?:yximgs|kwai|kuaishou)[^"'\s]*/gi);
+      if (cdnImages && cdnImages.length) {
+        images = cdnImages.filter(function(u) { return u.indexOf('upic') > 0 || u.indexOf('kwai') > 0 || u.indexOf('kscdn') > 0; });
+      }
     }
     var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
     if (ogT) title = ogT[1];
@@ -536,6 +612,7 @@ async function parseKuaishou(originalUrl) {
     return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images || [] };
   }
 
+  // 
   function fillAvatarIfMissing(author, html) {
     if (!author || author.avatar) return author;
     var av = html.match(/"avatar"\s*:\s*"([^"]+)"/) || html.match(/"headUrl"\s*:\s*"([^"]+)"/) || html.match(/"userAvatar"\s*:\s*"([^"]+)"/) || html.match(/"headerUrl"\s*:\s*"([^"]+)"/);
@@ -543,7 +620,7 @@ async function parseKuaishou(originalUrl) {
     return author;
   }
 
-// ===== __NEXT_DATA__ 深度结构化搜索（精确定位，跳过评论/音乐/推荐节点）=====
+  // ===== __NEXT_DATA__ 深度结构化搜索（精准定位，跳过评论/音乐/推荐节点）=====
   function deepFindAuthorInJSON(obj, depth) {
     if (!obj || typeof obj !== 'object' || depth > 15) return null;
     var author = validAuthor(obj);
@@ -596,34 +673,57 @@ async function parseKuaishou(originalUrl) {
     return validAuthor({ id: m[1], name: name });
   }
 
-    var video = extractVideo(html);
-  var deepFindImages = function(obj, depth) {
-    if (!obj || typeof obj !== 'object' || depth > 8) return null;
-    if (obj.images && Array.isArray(obj.images) && obj.images.length) {
-      var urls = obj.images.filter(function(v) { return typeof v === 'string' && v.length > 20; });
-      if (urls.length) return urls;
-    }
-    if (obj.imageList && Array.isArray(obj.imageList) && obj.imageList.length) {
-      var urlList = obj.imageList.map(function(v) { return v.url || v.urlDefault || (typeof v === 'string' ? v : ''); }).filter(function(u) { return u && u.length > 10; });
-      if (urlList.length) return urlList;
-    }
-    for (var k in obj) {
-      if (k === 'comment' || k === 'comments' || k === 'feed' || k === 'related' || k === 'music') continue;
-      var r = deepFindImages(obj[k], depth + 1);
-      if (r) return r;
-    }
-    return null;
-  }
+  var video = extractVideo(html);
+  // Deep search for images from __NEXT_DATA__ and INIT_STATE
   if (!video.images || !video.images.length) {
-    var nextMatchData = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*??)</script>/);
-    if (nextMatchData) {
+    var nextDataMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (nextDataMatch) {
       try {
-        var nd = JSON.parse(nextMatchData[1].replace(/undefined/g, 'null'));
-        var found = deepFindImages(nd, 0);
-        if (found) video.images = found;
+        var nd = JSON.parse(nextDataMatch[1].replace(/undefined/g, 'null'));
+        function deepFindImages(obj, depth) {
+          if (!obj || typeof obj !== 'object' || depth > 10) return [];
+          var result = [];
+          if (Array.isArray(obj)) {
+            for (var di = 0; di < obj.length; di++) {
+              if (typeof obj[di] === 'string' && obj[di].length > 20 && (obj[di].indexOf('http') === 0)) {
+                if (obj[di].match(/\.(jpg|png|webp|jpeg)/i)) result.push(obj[di]);
+              }
+              result = result.concat(deepFindImages(obj[di], depth + 1));
+            }
+          } else {
+            for (var dk in obj) {
+              if (dk === 'comment' || dk === 'comments' || dk === 'music' || dk === 'feed' || dk === 'related') continue;
+              if (typeof obj[dk] === 'string' && obj[dk].length > 20 && (obj[dk].indexOf('http') === 0)) {
+                if (obj[dk].match(/\.(jpg|png|webp|jpeg)/i) && obj[dk].indexOf('yximgs') > 0) result.push(obj[dk]);
+              }
+              result = result.concat(deepFindImages(obj[dk], depth + 1));
+            }
+          }
+          return result;
+        }
+        var imgs = deepFindImages(nd, 0);
+        if (imgs && imgs.length) { video.images = imgs.slice(0, 50); }
       } catch(e) {}
     }
-  }  var finalAuthor = null;
+  }
+  if (!video.images || !video.images.length) {
+    var initMatch = html.match(/window\.INIT_STATE\s*=\s*(\{[\s\S]*?\});/);
+    if (initMatch) {
+      try {
+        var initRaw = initMatch[1].replace(/\\u002F/g, '/').replace(/\\u003E/g, '>').replace(/\\u003C/g, '<');
+        var photoChunks = initRaw.match(/"url"\s*:\s*"([^"]+\.(?:jpg|png|webp)[^"]*)"/g);
+        if (photoChunks) {
+          var initImgs = [];
+          for (var pi = 0; pi < photoChunks.length; pi++) {
+            var um = photoChunks[pi].match(/"url"\s*:\s*"([^"]+)"/);
+            if (um && um[1].indexOf('yximgs') > 0) initImgs.push(um[1]);
+          }
+          if (initImgs.length) video.images = initImgs.slice(0, 50);
+        }
+      } catch(e) {}
+    }
+  }
+  var finalAuthor = null;
 
   // 
   finalAuthor = findFromNextData(html);
@@ -644,8 +744,8 @@ async function parseKuaishou(originalUrl) {
           }
           if (!video.videoUrl && d.url) video.videoUrl = d.url;
           if (!video.cover && d.cover) video.cover = d.cover;
-          if ((!video.images || !video.images.length) && d.images && d.images.length) video.images = d.images;
           if (!video.title && d.title) video.title = d.title;
+          if (!video.images && d.images && d.images.length) video.images = d.images.slice(0, 50);
         }
       }
     } catch (e) {}
@@ -657,25 +757,141 @@ async function parseKuaishou(originalUrl) {
   if (!video.videoUrl && !video.cover && (!video.images || !video.images.length)) return fail('未提取到快手视频地址');
 
   return ok('kuaishou', {
-    type: video.videoUrl ? 'video' : (video.images && video.images.length > 0 ? 'image' : 'video'),
+    type: (video.images && video.images.length > 0 && !video.videoUrl) ? 'image' : 'video',
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
     url: video.videoUrl || '',
-    images: video.images && video.images.length > 0 ? video.images : []
+    images: video.images || []
   });
 }
 
 
 
 // ===== 抖音笔记/图集解析 =====
+function extractRENDER_DATA(html) {
+  if (!html) return null;
+  var patterns = ['id="RENDER_DATA"', "id='RENDER_DATA'", 'id="__RENDER_DATA__"', "id='__RENDER_DATA__'", 'id="__NEXT_DATA__"'];
+  for (var pi = 0; pi < patterns.length; pi++) {
+    var idx = html.indexOf(patterns[pi]);
+    if (idx >= 0) {
+      var start = html.indexOf('>', idx) + 1;
+      if (start > 0) {
+        var end = html.indexOf('</script>', start);
+        if (end > start) {
+          return [null, html.substring(start, end)];
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function parseDouyinNote(noteId) {
+var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", images = [], videoUrl = "", videoList = [];
+
+  // Step 1: Try douyin note API endpoint first (works from Cloudflare Workers IP)
+  try {
+    var apiRes = await fetch('https://www.douyin.com/aweme/v1/web/note/detail/?note_id=' + noteId, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.douyin.com/',
+        'Accept': 'application/json',
+      },
+    });
+    if (apiRes.ok) {
+      var apiJson = await apiRes.json();
+      var noteDetail = apiJson.note || apiJson.data || apiJson;
+      var noteData = null;
+      if (noteDetail && noteDetail.noteDetailMap) {
+        var ndKeys = Object.keys(noteDetail.noteDetailMap);
+        if (ndKeys.length) noteData = noteDetail.noteDetailMap[ndKeys[0]].note;
+      } else if (noteDetail && noteDetail.note) {
+        noteData = noteDetail.note;
+      }
+      if (noteData) {
+        if (!title) title = noteData.title || noteData.desc || '';
+        if (!authorName) authorName = (noteData.user && noteData.user.nickname) || '';
+        if (!authorAvatar) authorAvatar = (noteData.user && noteData.user.avatar) || '';
+        if (!authorId) authorId = (noteData.user && (noteData.user.userId || noteData.user.id)) || '';
+        if (!cover) cover = (noteData.cover && (noteData.cover.urlDefault || noteData.cover.url)) || '';
+        if (noteData.imageList && noteData.imageList.length) {
+          noteData.imageList.forEach(function(img) {
+            var hasVideoInImg = img.video && img.video.media && img.video.media.stream;
+            if (hasVideoInImg) {
+              var vidCandidates = img.video.media.stream.h264 || img.video.media.stream.h265 || [];
+              var foundVid = '';
+              for (var vi = 0; vi < vidCandidates.length; vi++) {
+                var vc = vidCandidates[vi];
+                if (vc.masterUrl || vc.url) { foundVid = vc.masterUrl || vc.url; break; }
+              }
+              if (foundVid) { videoList.push(foundVid); if (!videoUrl) videoUrl = foundVid; }
+            }
+            var imgUrl = img.urlDefault || img.url || '';
+            if (imgUrl && images.indexOf(imgUrl) < 0) images.push(imgUrl);
+          });
+        }
+      }
+    }
+  } catch(e) {}
+
+  // Step 2: Try iesdouyin aweme detail API
+  if (images.length === 0 && !videoUrl) {
+    try {
+      var apiRes2 = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + noteId, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://www.douyin.com/',
+          'Accept': 'application/json',
+        },
+      });
+      if (apiRes2.ok) {
+        var apiJson2 = await apiRes2.json();
+        var itemData = apiJson2.aweme_detail || apiJson2.data || apiJson2;
+        if (itemData && itemData.images && itemData.images.length) {
+          itemData.images.forEach(function(img) {
+            // Extract embedded video from each image item (for 动图/mixed works)
+            if (img.video && img.video.media && img.video.media.stream) {
+              var vidCandidates = img.video.media.stream.h264 || img.video.media.stream.h265 || [];
+              var foundVid = '';
+              for (var vi = 0; vi < vidCandidates.length; vi++) {
+                var vc = vidCandidates[vi];
+                var vUrls = [vc.masterUrl, vc.url].concat(vc.backupUrls || []);
+                for (var vu = 0; vu < vUrls.length; vu++) {
+                  if (vUrls[vu] && (vUrls[vu].indexOf("sns-video-zl") > 0 || vUrls[vu].indexOf("sns-video-hw") > 0 || vUrls[vu].indexOf('.zjcdn.com') > 0 || vUrls[vu].indexOf('.douyinvod') > 0 || vUrls[vu].indexOf('365yg.com') > 0 || vUrls[vu].indexOf('ixigua.com') > 0)) {
+                    foundVid = vUrls[vu]; break;
+                  }
+                }
+                if (foundVid) break;
+              }
+              if (!foundVid && vidCandidates.length > 0) {
+                foundVid = vidCandidates[0].masterUrl || vidCandidates[0].url || '';
+              }
+              if (foundVid) {
+                videoList.push(foundVid);
+                if (!videoUrl) videoUrl = foundVid;
+              }
+            }
+            var imgUrl = img.url_list && img.url_list[0];
+            if (imgUrl && images.indexOf(imgUrl) < 0) images.push(imgUrl);
+          });
+        }
+        if (!title) title = itemData.desc || '';
+        if (!authorName) authorName = (itemData.author && itemData.author.nickname) || '';
+        if (!authorAvatar) authorAvatar = (itemData.author && (itemData.author.avatar_larger && itemData.author.avatar_larger.url_list && itemData.author.avatar_larger.url_list[0])) || '';
+        if (!authorId) authorId = (itemData.author && (itemData.author.unique_id || itemData.author.uid)) || '';
+        if (!cover) cover = (itemData.video && itemData.video.origin_cover && itemData.video.origin_cover.url_list && itemData.video.origin_cover.url_list[0]) || '';
+      }
+    } catch(e) {}
+  }
+
+  // Step 3: Fall back to page scraping (RENDER_DATA from HTML)
+  if (images.length === 0 && !videoUrl) {
   var noteUrl = "https://www.douyin.com/note/" + noteId + "/";
   var html;
-  try { html = await fetchHtml(noteUrl, { Referer: "https://www.douyin.com/" }); } catch(e) { return null; }
-  var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", images = [], videoUrl = "";
-  var rdMatch = html.match(/id=["']RENDER_DATA["'][^>]*>([^<]+)<\/script>/);
+  try { html = await fetchHtml(noteUrl, { Referer: "https://www.douyin.com/" }); } catch(e) { if (images.length > 0 || videoUrl) { return { type: videoUrl ? "video" : "image", title: title, desc: title || "", author: { name: authorName, id: authorId, avatar: authorAvatar }, cover: cover, url: videoUrl || "", images: images, videoList: videoList }; } return null; }
+  var rdMatch = extractRENDER_DATA(html);
   if (rdMatch) {
     try {
       var decoded = decodeURIComponent(rdMatch[1]);
@@ -693,11 +909,32 @@ async function parseDouyinNote(noteId) {
             if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || "";
             if (note.imageList && note.imageList.length) {
               note.imageList.forEach(function(img) {
-                var imgUrl = img.urlDefault || img.url || "";
+                var hasVideoData = img.video && img.video.media && img.video.media.stream;
+                if (hasVideoData) {
+                  var vidCandidates = img.video.media.stream.h264 || img.video.media.stream.h265 || [];
+                  var foundVid = '';
+                  for (var vi = 0; vi < vidCandidates.length; vi++) {
+                    var vc = vidCandidates[vi];
+                    var vUrls = [vc.masterUrl, vc.url].concat(vc.backupUrls || []);
+                    for (var vu = 0; vu < vUrls.length; vu++) {
+                      if (vUrls[vu] && (vUrls[vu].indexOf("sns-video-zl") > 0 || vUrls[vu].indexOf("sns-video-hw") > 0 || vUrls[vu].indexOf(".zjcdn.com") > 0 || vUrls[vu].indexOf(".douyinvod") > 0 || vUrls[vu].indexOf("365yg.com") > 0 || vUrls[vu].indexOf("ixigua.com") > 0)) {
+                        foundVid = vUrls[vu]; break;
+                      }
+                    }
+                    if (foundVid) break;
+                  }
+                  if (!foundVid && vidCandidates.length > 0) {
+                    foundVid = vidCandidates[0].masterUrl || vidCandidates[0].url || '';
+                  }
+                  if (foundVid) {
+                    videoList.push(foundVid);
+                    if (!videoUrl) videoUrl = foundVid;
+                  }
+                }
+                var imgUrl = img.urlDefault || img.url || '';
                 if (imgUrl) images.push(imgUrl);
               });
             }
-            // Extract audio/music for image albums
             var audioUrl = "";
             if (note.music && note.music.playUrl) {
               var muList = note.music.playUrl.urlList || note.music.playUrl.url_list || [];
@@ -706,14 +943,13 @@ async function parseDouyinNote(noteId) {
             if (!audioUrl && note.music && note.music.mid) {
               audioUrl = "https://sf6-cdn-tos.douyinstatic.com/obj/" + note.music.mid;
             }
-            // Extract video from note (animated/effect notes)
             if (note.video && note.video.media && note.video.media.stream) {
               var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
               for (var ci = 0; ci < candidates.length; ci++) {
                 var cdd = candidates[ci];
                 var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []);
                 for (var ui = 0; ui < urls.length; ui++) {
-                  if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0 || urls[ui].indexOf(".zjcdn.com") > 0 || urls[ui].indexOf(".douyinvod") > 0)) {
+                  if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0 || urls[ui].indexOf(".zjcdn.com") > 0 || urls[ui].indexOf(".douyinvod") > 0 || urls[ui].indexOf("365yg.com") > 0 || urls[ui].indexOf("ixigua.com") > 0)) {
                     videoUrl = urls[ui]; break;
                   }
                 }
@@ -723,25 +959,58 @@ async function parseDouyinNote(noteId) {
                 videoUrl = candidates[0].masterUrl || candidates[0].url || "";
               }
             }
-            // If no video but has audio, use audioUrl for background playback
-            if (!videoUrl && audioUrl) {
-              videoUrl = audioUrl;
-            }
+            if (!videoUrl && audioUrl) videoUrl = audioUrl;
           }
         }
       }
     } catch(e) {}
   }
+  }
+    // Step 4: BugPK fallback for douyin notes (with retry)
+  if (!videoList.length) {
+    for (var bpri = 0; bpri < 3 && !videoList.length; bpri++) {
+      try {
+        var bpNoteUrl = "https://www.douyin.com/note/" + noteId + "/";
+        var bpRes3 = await fetch("https://api.bugpk.com/api/short_videos?url=" + encodeURIComponent(bpNoteUrl), {
+          headers: { "User-Agent": UA, "Accept": "application/json" },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (bpRes3.ok) {
+          var bpJson3 = await bpRes3.json();
+          if (bpJson3.code === 200 && bpJson3.data) {
+            if (bpJson3.data.live_photo && bpJson3.data.live_photo.length) {
+              bpJson3.data.live_photo.forEach(function(lp) {
+                if (lp.video && videoList.indexOf(lp.video) < 0) {
+                  videoList.push(lp.video);
+                  if (!videoUrl) videoUrl = lp.video;
+                }
+                if (lp.image && images.indexOf(lp.image) < 0) images.push(lp.image);
+              });
+            }
+            if (!title && (bpJson3.data.title || bpJson3.data.desc)) title = bpJson3.data.title || bpJson3.data.desc || "";
+            if (!cover && bpJson3.data.cover) cover = bpJson3.data.cover;
+            var bpA = bpJson3.data.author || bpJson3.data.extra || {};
+            if (!authorName) authorName = bpA.name || bpA.nickname || "";
+            if (!authorId) authorId = String(bpA.id || bpA.uid || "");
+            if (!authorAvatar) authorAvatar = bpA.avatar || "";
+            if (!videoUrl && bpJson3.data.url && bpJson3.data.url.indexOf("aweme.snssdk.com") < 0) videoUrl = bpJson3.data.url;
+            if (bpJson3.data.images && bpJson3.data.images.length) {
+              bpJson3.data.images.forEach(function(img) {
+                if (img && images.indexOf(img) < 0) images.push(img);
+              });
+            }
+          }
+        }
+      } catch(e) {}
+    }
+  }
   if (images.length > 0 || videoUrl) {
     return { type: videoUrl ? "video" : "image", title: title, desc: title || "",
       author: { name: authorName, id: authorId, avatar: authorAvatar },
-      cover: cover, url: videoUrl || "", images: images };
+      cover: cover, url: videoUrl || "", images: images, videoList: videoList };
   }
   return null;
-}
-
-// ===== 小红书=====
-async function parseXiaohongshu(originalUrl) {
+}async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [];
@@ -888,7 +1157,7 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // TikTok 页面里第一个用户是分享者，非当前登录用户，最后一个才是视频原作者
+  // TikTok 页面里第一个用户是分享者/当前登录用户，最后一个才是视频原作者
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
@@ -1412,10 +1681,6 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
-
-
-
-
 
 
 
