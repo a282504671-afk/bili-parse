@@ -42,11 +42,44 @@ async function resolveRedirect(url) {
 }
 
 async function fetchHtml(url, extraHeaders = {}) {
-  const res = await fetch(url, {
+  // First request - get cookies from Set-Cookie
+  const res1 = await fetch(url, {
     headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'zh-CN,zh;q=0.9', ...extraHeaders },
+    redirect: 'manual',
   });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return await res.text();
+  var cookies = '';
+  if (res1.headers) {
+    const setCookie = res1.headers.get('Set-Cookie');
+    if (setCookie) cookies = setCookie.split(';')[0];
+  }
+  var text = await res1.text();
+  
+  // Check if page has obfuscated JS (anti-bot) - need second request with cookies
+  if (text.indexOf('_$jsvmprt') >= 0 && cookies) {
+    const res2 = await fetch(url, {
+      headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'zh-CN,zh;q=0.9', 'Cookie': cookies, ...extraHeaders },
+      redirect: 'follow',
+    });
+    if (res2.ok) {
+      text = await res2.text();
+    }
+  }
+  
+  // Try a third retry as simple follow-redirect
+  if (text.indexOf('reload') >= 0 && text.indexOf('_$jsvmprt') >= 0) {
+    try {
+      const res3 = await fetch(url, {
+        headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'zh-CN,zh;q=0.9', ...extraHeaders },
+        redirect: 'follow',
+      });
+      if (res3.ok) {
+        const text3 = await res3.text();
+        if (text3.indexOf('_$jsvmprt') < 0) text = text3;
+      }
+    } catch(e) {}
+  }
+  
+  return text;
 }
 
 // ===== 抖音 =====
