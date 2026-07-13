@@ -626,7 +626,7 @@ async function parseDouyinNote(noteId) {
   var noteUrl = "https://www.douyin.com/note/" + noteId + "/";
   var html;
   try { html = await fetchHtml(noteUrl, { Referer: "https://www.douyin.com/" }); } catch(e) { return null; }
-  var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", images = [], videoUrl = "";
+var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", images = [], videoUrl = "", videoList = [];
   var rdMatch = html.match(/id=["']RENDER_DATA["'][^>]*>([^<]+)<\/script>/);
   if (rdMatch) {
     try {
@@ -645,9 +645,34 @@ async function parseDouyinNote(noteId) {
             if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || "";
             if (note.imageList && note.imageList.length) {
               note.imageList.forEach(function(img) {
-                var imgUrl = img.urlDefault || img.url || "";
+                // Check if this imageList item has embedded video data
+                var hasVideoData = img.video && img.video.media && img.video.media.stream;
+                if (hasVideoData) {
+                  var vidCandidates = img.video.media.stream.h264 || img.video.media.stream.h265 || [];
+                  var foundVid = '';
+                  for (var vi = 0; vi < vidCandidates.length; vi++) {
+                    var vc = vidCandidates[vi];
+                    var vUrls = [vc.masterUrl, vc.url].concat(vc.backupUrls || []);
+                    for (var vu = 0; vu < vUrls.length; vu++) {
+                      if (vUrls[vu] && (vUrls[vu].indexOf("sns-video-zl") > 0 || vUrls[vu].indexOf("sns-video-hw") > 0 || vUrls[vu].indexOf(".zjcdn.com") > 0 || vUrls[vu].indexOf(".douyinvod") > 0)) {
+                        foundVid = vUrls[vu]; break;
+                      }
+                    }
+                    if (foundVid) break;
+                  }
+                  if (!foundVid && vidCandidates.length > 0) {
+                    foundVid = vidCandidates[0].masterUrl || vidCandidates[0].url || '';
+                  }
+                  if (foundVid) {
+                    videoList.push(foundVid);
+                    if (!videoUrl) videoUrl = foundVid;
+                  }
+                }
+                // Add image URL
+                var imgUrl = img.urlDefault || img.url || '';
                 if (imgUrl) images.push(imgUrl);
               });
+            }
             }
             // Extract audio/music for image albums
             var audioUrl = "";
@@ -687,7 +712,7 @@ async function parseDouyinNote(noteId) {
   if (images.length > 0 || videoUrl) {
     return { type: videoUrl ? "video" : "image", title: title, desc: title || "",
       author: { name: authorName, id: authorId, avatar: authorAvatar },
-      cover: cover, url: videoUrl || "", images: images };
+      cover: cover, url: videoUrl || "", images: images, videoList: videoList };
   }
   return null;
 }
