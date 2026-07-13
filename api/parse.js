@@ -846,12 +846,21 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
               if (lp.image && images.indexOf(lp.image) < 0) images.push(lp.image);
             });
           }
-          // BugPK author/title/cover extraction
+          // BugPK author/title/cover extraction (check multiple paths)
           if (!title && (bpJson3.data.title || bpJson3.data.desc)) title = bpJson3.data.title || bpJson3.data.desc || '';
           if (!cover && bpJson3.data.cover) cover = bpJson3.data.cover;
-          if (!authorName && bpJson3.data.author && bpJson3.data.author.name) authorName = bpJson3.data.author.name;
-          if (!authorId && bpJson3.data.author && bpJson3.data.author.id) authorId = String(bpJson3.data.author.id);
-          if (!authorAvatar && bpJson3.data.author && bpJson3.data.author.avatar) authorAvatar = bpJson3.data.author.avatar;
+          var bpAuthor = bpJson3.data.author || bpJson3.data.extra || (bpJson3.data.music || {}).author || {};
+          if (!authorName) authorName = bpAuthor.name || bpAuthor.nickname || bpAuthor.nickName || (typeof bpAuthor === 'string' ? bpAuthor : '') || '';
+          if (!authorId) authorId = String(bpAuthor.id || bpAuthor.uid || bpAuthor.user_id || bpAuthor.unique_id || (bpJson3.data.extra && bpJson3.data.extra.unique_id) || '');
+          if (!authorAvatar) authorAvatar = bpAuthor.avatar || bpAuthor.avatar_larger || bpAuthor.headUrl || '';
+          // Also check top-level extra fields
+          if (!authorId && bpJson3.data.extra && bpJson3.data.extra.aweme_id) authorId = String(bpJson3.data.extra.aweme_id);
+          if (!title && bpJson3.data.extra && bpJson3.data.extra.share_url) {
+            // Try music author if available
+            if (bpJson3.data.music && bpJson3.data.music.author) {
+              if (!authorName) authorName = bpJson3.data.music.author;
+            }
+          }
           if (!videoUrl && bpJson3.data.url && bpJson3.data.url.indexOf("aweme.snssdk.com") < 0) videoUrl = bpJson3.data.url;
           if (bpJson3.data.images && bpJson3.data.images.length) {
             bpJson3.data.images.forEach(function(img) {
