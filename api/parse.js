@@ -827,6 +827,37 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
     } catch(e) {}
   }
   }
+  // Step 4: BugPK fallback for douyin notes (contains live_photo with video URLs)
+  if (!videoList.length) {
+    try {
+      var bpNoteUrl3 = "https://www.douyin.com/note/" + noteId + "/";
+      var bpRes3 = await fetch("https://api.bugpk.com/api/short_videos?url=" + encodeURIComponent(bpNoteUrl3), {
+        headers: { "User-Agent": UA, "Accept": "application/json" },
+      });
+      if (bpRes3.ok) {
+        var bpJson3 = await bpRes3.json();
+        if (bpJson3.code === 200 && bpJson3.data) {
+          if (bpJson3.data.live_photo && bpJson3.data.live_photo.length) {
+            bpJson3.data.live_photo.forEach(function(lp) {
+              if (lp.video && videoList.indexOf(lp.video) < 0) {
+                videoList.push(lp.video);
+                if (!videoUrl) videoUrl = lp.video;
+              }
+              if (lp.image && images.indexOf(lp.image) < 0) images.push(lp.image);
+            });
+          }
+          if (!videoUrl && bpJson3.data.url && bpJson3.data.url.indexOf("aweme.snssdk.com") < 0) videoUrl = bpJson3.data.url;
+          if (bpJson3.data.images && bpJson3.data.images.length) {
+            bpJson3.data.images.forEach(function(img) {
+              if (img && images.indexOf(img) < 0) images.push(img);
+            });
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
+
   if (images.length > 0 || videoUrl) {
     return { type: videoUrl ? "video" : "image", title: title, desc: title || "",
       author: { name: authorName, id: authorId, avatar: authorAvatar },
