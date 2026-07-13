@@ -846,6 +846,12 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
               if (lp.image && images.indexOf(lp.image) < 0) images.push(lp.image);
             });
           }
+          // BugPK author/title/cover extraction
+          if (!title && (bpJson3.data.title || bpJson3.data.desc)) title = bpJson3.data.title || bpJson3.data.desc || '';
+          if (!cover && bpJson3.data.cover) cover = bpJson3.data.cover;
+          if (!authorName && bpJson3.data.author && bpJson3.data.author.name) authorName = bpJson3.data.author.name;
+          if (!authorId && bpJson3.data.author && bpJson3.data.author.id) authorId = String(bpJson3.data.author.id);
+          if (!authorAvatar && bpJson3.data.author && bpJson3.data.author.avatar) authorAvatar = bpJson3.data.author.avatar;
           if (!videoUrl && bpJson3.data.url && bpJson3.data.url.indexOf("aweme.snssdk.com") < 0) videoUrl = bpJson3.data.url;
           if (bpJson3.data.images && bpJson3.data.images.length) {
             bpJson3.data.images.forEach(function(img) {
