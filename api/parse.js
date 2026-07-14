@@ -942,7 +942,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                   if (candidates.length) { for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
                 if (note.imageList && note.imageList.length) {
-                  note.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
+                  note.imageList.forEach(function(img) { var iu = img.urlDefault || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/(notes_pre_post\/[^!?]+).*$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
                 }
               }
             }
@@ -975,7 +975,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                   if (c.length) { for (var ci = 0; ci < c.length; ci++) { var cdd = c[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
                 if (!images.length && note.image_list && note.image_list.length) {
-                  note.image_list.forEach(function(img) { images.push(img.url_default || img.url || ''); });
+                  note.image_list.forEach(function(img) { var iu = img.url_default || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/(notes_pre_post\/[^!?]+).*$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
                 }
               }
             }
