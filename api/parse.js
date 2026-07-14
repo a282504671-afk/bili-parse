@@ -479,7 +479,7 @@ async function parseKuaishou(originalUrl) {
 
   // 
   function extractVideo(html) {
-    var videoUrl = '', title = '', cover = '';
+    var videoUrl = '', title = '', cover = '', images = [];
     var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url="([^"]+)"/, /data-url="([^"']+)"/];
     for (var i = 0; i < patterns.length; i++) {
       var m = html.match(patterns[i]);
@@ -504,7 +504,30 @@ async function parseKuaishou(originalUrl) {
       if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
       if (tMatch) title = tMatch[1];
     }
-    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '' };
+    try {
+      var atlasUrls = html.match(/https?:\/\/[^""\'\s]*yximgs\.com\/ufile\/atlas\/[^""\'\s]+?\.jpg/g);
+      if (atlasUrls) {
+        for (var ai = 0; ai < atlasUrls.length; ai++) {
+          atlasUrls[ai] = atlasUrls[ai].replace(/&amp;/g, "&");
+        }
+        for (var ai = 0; ai < atlasUrls.length; ai++) {
+          if (images.indexOf(atlasUrls[ai]) < 0) images.push(atlasUrls[ai]);
+        }
+      }
+      if (images.length === 0) {
+        var imgMatch = html.match(/""images""\s*:\s*\[([^\]]+)\]/);
+        if (imgMatch) {
+          var urls = imgMatch[1].match(/""https?:\/\/[^""]*yximgs\.com[^""]*""/g);
+          if (urls) {
+            for (var ui = 0; ui < urls.length; ui++) {
+              var cl = urls[ui].replace(/""/g, "").replace(/\\u002F/g, "/").replace(/\\\//g, "/");
+              if (cl.indexOf(".jpg") > 0 && images.indexOf(cl) < 0) images.push(cl);
+            }
+          }
+        }
+      }
+    } catch(e) {}
+    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images };
   }
 
   // 
@@ -602,13 +625,13 @@ async function parseKuaishou(originalUrl) {
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
 
   return ok('kuaishou', {
-    type: 'video',
+    type: (video.images && video.images.length > 0 && !video.videoUrl) ? 'image' : 'video',
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
     url: video.videoUrl || '',
-    images: []
+    images: video.images || []
   });
 }
 
