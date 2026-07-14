@@ -633,7 +633,7 @@ async function parseKuaishou(originalUrl) {
 
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
 
-  var ksImages = (video.images && video.images.length > 0) ? video.images : [];
+    var ksImages = (video.images && video.images.length > 0) ? video.images : [];
   return ok('kuaishou', {
     type: ksImages.length ? 'image' : 'video',
     title: video.title || '',
