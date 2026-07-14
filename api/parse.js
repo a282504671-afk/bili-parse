@@ -119,10 +119,17 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
+  // 检查是否为笔记/图集页面
+  var isNote = originalUrl.indexOf("/note/") >= 0;
   // 解析item_id
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
 
+  if (isNote && itemId) {
+    var noteResult = await parseDouyinNote(itemId);
+    if (noteResult) return ok("douyin", noteResult);
+    // 如果笔记解析失败，退回视频解析流程
+  }
 
   if (itemId) {
     // 关键：直接用iesdouyin.com/share/video/页面提取数据（不跟redirect）
@@ -132,7 +139,11 @@ async function parseDouyin(originalUrl) {
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
-
+    // 重定向后重新检测是否为笔记/图集
+    if (realUrl.indexOf("/note/") >= 0) {
+      var noteResult = await parseDouyinNote(itemId);
+      if (noteResult) return ok("douyin", noteResult);
+    }
     realUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
   }
 
@@ -618,11 +629,6 @@ async function parseKuaishou(originalUrl) {
           if (!video.videoUrl && d.url) video.videoUrl = d.url;
           if (!video.cover && d.cover) video.cover = d.cover;
           if (!video.title && d.title) video.title = d.title;
-          // 提取图集图片
-          if (d.images && d.images.length > 0) {
-            if (!video.images) video.images = [];
-            video.images = d.images.filter(u => u && !u.includes('notinline') && u.startsWith('http'));
-          }
         }
       }
     } catch (e) {}
@@ -633,15 +639,14 @@ async function parseKuaishou(originalUrl) {
 
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
 
-    var ksImages = (video.images && video.images.length > 0) ? video.images : [];
   return ok('kuaishou', {
-    type: ksImages.length ? 'image' : 'video',
+    type: 'video',
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
-    url: ksImages.length ? '' : (video.videoUrl || ''),
-    images: ksImages
+    url: video.videoUrl || '',
+    images: []
   });
 }
 
