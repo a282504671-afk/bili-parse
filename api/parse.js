@@ -321,7 +321,7 @@ return ok('douyin', {
     desc: title || '',
     author: { name: authorName, id: authorId, avatar: avatar },
     cover: cover,
-    url: playUrl,
+    url: images.length ? '' : playUrl,
     images: images,
   });
 }
@@ -632,6 +632,10 @@ async function parseKuaishou(originalUrl) {
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
+  // 兜底：有封面无视频时当作单图
+  if ((!video.images || !video.images.length) && video.cover && !video.videoUrl) {
+    video.images = [video.cover];
+  }
 
     var ksImages = (video.images && video.images.length > 0) ? video.images : [];
   return ok('kuaishou', {
