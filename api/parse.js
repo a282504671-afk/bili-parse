@@ -316,7 +316,7 @@ async function parseDouyin(originalUrl) {
     } catch(e) {}
   }
 return ok('douyin', {
-    type: images.length ? 'image' : 'video',
+    type: noteIsVideoType ? 'video' : (videoUrl && images.length <= 1 ? 'video' : (images.length ? 'image' : 'video')),
     title: title,
     desc: title || '',
     author: { name: authorName, id: authorId, avatar: avatar },
