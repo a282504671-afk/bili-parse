@@ -734,7 +734,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
         if (!title) title = noteData.title || noteData.desc || '';
         if (!authorName) authorName = (noteData.user && noteData.user.nickname) || '';
         if (!authorAvatar) authorAvatar = (noteData.user && noteData.user.avatar) || '';
-        if (!authorId) authorId = (noteData.user && (noteData.user.userId || noteData.user.uniqueId || noteData.user.shortId || noteData.user.id)) || '';
+        if (!authorId) authorId = (noteData.user && (noteData.user.uniqueId || noteData.user.shortId || noteData.user.userId || noteData.user.id)) || '';
         if (!cover) cover = (noteData.cover && (noteData.cover.urlDefault || noteData.cover.url)) || '';
         if (noteData.imageList && noteData.imageList.length) {
           noteData.imageList.forEach(function(img) {
@@ -978,7 +978,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                 if (!authorName) authorName = (note.user && note.user.nickname) || '';
                 if (!authorAvatar) authorAvatar = (note.user && note.user.avatar) || '';
                 if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || '';
-                if (!authorId && note.user) authorId = note.user.userId || note.user.uniqueId || note.user.shortId || '';
+                if (!authorId && note.user) authorId = note.user.uniqueId || note.user.shortId || note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
                   if (candidates.length) { for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
@@ -1601,6 +1601,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
