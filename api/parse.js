@@ -632,9 +632,22 @@ async function parseKuaishou(originalUrl) {
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
-  // 兜底：有封面无视频时当作单图
-  if ((!video.images || !video.images.length) && video.cover && !video.videoUrl) {
-    video.images = [video.cover];
+  // 兜底：从页面 JSON 数据中取真实图片
+  if ((!video.images || !video.images.length) && !video.videoUrl) {
+    var photoMatch = html.match(/\"photo\"\s*:\s*\{[^}]+\"coverUrls\"\s*:\s*\[([^\]]+)\]/);
+    if (photoMatch) {
+      var urls = photoMatch[1].match(/\"url\"\s*:\s*\"([^\"]+)\"/g);
+      if (urls && urls.length > 0) {
+        video.images = [];
+        urls.forEach(function(u) {
+          var pu = u.match(/\"url\"\s*:\s*\"([^\"]+)\"/);
+          if (pu) video.images.push(pu[1].replace(/\\u002F/g, '/'));
+        });
+      }
+    }
+    if ((!video.images || !video.images.length) && video.cover && video.cover.indexOf('yximgs') >= 0) {
+      video.images = [video.cover];
+    }
   }
 
     var ksImages = (video.images && video.images.length > 0) ? video.images : [];
