@@ -370,7 +370,7 @@ async function parseBilibili(originalUrl) {
     }
   } catch(e) {}
 
-  // 方式2: 直连失败 -> 通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK，用户家庭IP不可见）
+  // 方式2: 直连失败 鈫?通过 BUGPK 代理（api520.ccwu.cc 包裹 BUGPK锛岀敤鎴峰搴?IP 不可见）
   if (!info || !videoUrl) {
     try {
       var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
@@ -420,7 +420,7 @@ async function parseBilibili(originalUrl) {
 
   if (!info) return fail('获取B站视频信息失败，可能被海外IP限制');
 
-  // 获取播放地址（仅直连成功时尝试，BUGPK 已自带视频地址）
+  // 鑾峰彇鎾斁鍦板潃锛堜粎鐩磋繛鎴愬姛鏃跺皾璇曪紝BUGPK 宸茶嚜甯﹁棰戝湴鍧€锛?
   if (!videoUrl && info.cid && info.aid) {
     try {
       var pr = await fetch('https://api.bilibili.com/x/player/playurl?avid=' + info.aid + '&cid=' + info.cid + '&qn=80&fnval=16&fourk=1', {
@@ -472,7 +472,7 @@ async function parseKuaishou(originalUrl) {
   var isValidUid = function (v) { return !!v && /^\d+$/.test(String(v)); };
 
   // ===== 占位/无效昵称识别 =====
-  // 黑名单：快手/上游接口常见的匿名占位阵形
+  // 榛戝悕鍗曪細快手/涓婃父鎺ュ彛甯歌鐨勫尶鍚嶅崰浣嶆樀绉?
   var BAD_NAMES = ['快手用户', '神秘人', '热门用户', '已注销', '账号已注销', '未知用户', '佚名', 'kwai user', 'KuaiShou User', 'null', 'undefined'];
   // 
   var GARBAGE_PATTERN = /^[\?？\uFFFD\*\-_=.\s]+$/;
@@ -486,7 +486,7 @@ async function parseKuaishou(originalUrl) {
   };
   var isValidName = function (v) { return !isGarbageName(v); };
 
-  // 还原 \uXXXX 转义与常见 HTML 实体，避免阵形显示乱码
+  // 还原 \uXXXX 杞箟涓庡父瑙?HTML 瀹炰綋锛岄伩鍏嶆樀绉版樉绀轰贡鐮?
   function decodeText(s) {
     if (!s) return s;
     try {
@@ -517,78 +517,11 @@ async function parseKuaishou(originalUrl) {
 
   // 
   function extractVideo(html) {
-    var videoUrl = '', title = '', cover = '', images = [];
+    var videoUrl = '', title = '', cover = '';
     var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url="([^"]+)"/, /data-url="([^"']+)"/];
     for (var i = 0; i < patterns.length; i++) {
       var m = html.match(patterns[i]);
       if (m) { videoUrl = m[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/'); break; }
-    }
-    // Extract images from HTML for Kuaishou albums
-    var imgArrMatch = html.match(/"images"\s*:\s*\[/);
-    if (imgArrMatch) {
-      var imgStart = imgArrMatch.index;
-      var imgEnd = html.indexOf(']', imgStart);
-      if (imgEnd > imgStart) {
-        try { images = JSON.parse(html.substring(imgStart, imgEnd + 1)).filter(function(u) { return typeof u === 'string' && u.length > 20; }); } catch(e) {}
-      }
-    }
-    if (!images || !images.length) {
-      var imgListMatch = html.match(/"imageList"\s*:\s*\[/);
-      if (imgListMatch) {
-        var ilStart = imgListMatch.index;
-        var ilEnd = html.indexOf(']', ilStart);
-        if (ilEnd > ilStart) {
-          try {
-            var rawList = JSON.parse(html.substring(ilStart, ilEnd + 1).replace(/undefined/g, 'null'));
-            images = rawList.map(function(item) {
-              if (typeof item === 'string') return item;
-              return item.url || item.urlDefault || item.originUrl || (item.thumbnail ? (item.thumbnail.url || '') : '');
-            }).filter(function(u) { return u && u.length > 10; });
-          } catch(e) {}
-        }
-      }
-    }
-    if (!images || !images.length) {
-      var photoUrlsMatch = html.match(/"photoUrls"\s*:\s*\[/);
-      if (photoUrlsMatch) {
-        var puStart = photoUrlsMatch.index;
-        var puEnd = html.indexOf(']', puStart);
-        if (puEnd > puStart) {
-          try { images = JSON.parse(html.substring(puStart, puEnd + 1)).filter(function(u) { return typeof u === 'string' && u.length > 20; }); } catch(e) {}
-        }
-      }
-    }
-    if (!images || !images.length) {
-      var resourceUrlsMatch = html.match(/"resourceUrls"\s*:\s*\[/);
-      if (resourceUrlsMatch) {
-        var ruStart = resourceUrlsMatch.index;
-        var ruEnd = html.indexOf(']', ruStart);
-        if (ruEnd > ruStart) {
-          try { images = JSON.parse(html.substring(ruStart, ruEnd + 1)).filter(function(u) { return typeof u === 'string' && u.length > 20; }); } catch(e) {}
-        }
-      }
-    }
-    if (!images || !images.length) {
-      var photosMatch = html.match(/"photos"\s*:\s*\[/);
-      if (photosMatch) {
-        var phStart = photosMatch.index;
-        var phEnd = html.indexOf(']', phStart);
-        if (phEnd > phStart) {
-          try {
-            var rawPhotos = JSON.parse(html.substring(phStart, phEnd + 1).replace(/undefined/g, 'null'));
-            images = rawPhotos.map(function(item) {
-              if (typeof item === 'string') return item;
-              return item.url || item.originUrl || item.thumbnail || '';
-            }).filter(function(u) { return u && u.length > 10; });
-          } catch(e) {}
-        }
-      }
-    }
-    if (!images || !images.length) {
-      var cdnImages = html.match(/https?:\/\/[^"'\s]*?(?:\.jpg|\.png|\.webp|\.jpeg)[^"'\s]*?(?:yximgs|kwai|kuaishou)[^"'\s]*/gi);
-      if (cdnImages && cdnImages.length) {
-        images = cdnImages.filter(function(u) { return u.indexOf('upic') > 0 || u.indexOf('kwai') > 0 || u.indexOf('kscdn') > 0; });
-      }
     }
     var ogT = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
     if (ogT) title = ogT[1];
@@ -609,7 +542,7 @@ async function parseKuaishou(originalUrl) {
       if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
       if (tMatch) title = tMatch[1];
     }
-    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images || [] };
+    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '' };
   }
 
   // 
@@ -620,7 +553,7 @@ async function parseKuaishou(originalUrl) {
     return author;
   }
 
-  // ===== __NEXT_DATA__ 深度结构化搜索（精准定位，跳过评论/音乐/推荐节点）=====
+  // ===== __NEXT_DATA__ 娣卞害缁撴瀯鍖栨悳绱紙绮惧噯瀹氫綅锛岃烦杩囪瘎璁?音乐/鎺ㄨ崘鑺傜偣锛?=====
   function deepFindAuthorInJSON(obj, depth) {
     if (!obj || typeof obj !== 'object' || depth > 15) return null;
     var author = validAuthor(obj);
@@ -647,7 +580,7 @@ async function parseKuaishou(originalUrl) {
     } catch (e) { return null; }
   }
 
-  // ===== window.INIT_STATE 兜底（快手新版页面无 __NEXT_DATA__ 时使用，同步补头像）=====
+  // ===== window.INIT_STATE 兜底（快手新版页面无 __NEXT_DATA__ 鏃朵娇鐢紝鍚屾琛ュご鍍忥級 =====
   function findFromInitState(html) {
     var initMatch = html.match(/window\.INIT_STATE\s*=\s*(\{[\s\S]*?\});/);
     if (!initMatch) return null;
@@ -674,55 +607,6 @@ async function parseKuaishou(originalUrl) {
   }
 
   var video = extractVideo(html);
-  // Deep search for images from __NEXT_DATA__ and INIT_STATE
-  if (!video.images || !video.images.length) {
-    var nextDataMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-    if (nextDataMatch) {
-      try {
-        var nd = JSON.parse(nextDataMatch[1].replace(/undefined/g, 'null'));
-        function deepFindImages(obj, depth) {
-          if (!obj || typeof obj !== 'object' || depth > 10) return [];
-          var result = [];
-          if (Array.isArray(obj)) {
-            for (var di = 0; di < obj.length; di++) {
-              if (typeof obj[di] === 'string' && obj[di].length > 20 && (obj[di].indexOf('http') === 0)) {
-                if (obj[di].match(/\.(jpg|png|webp|jpeg)/i)) result.push(obj[di]);
-              }
-              result = result.concat(deepFindImages(obj[di], depth + 1));
-            }
-          } else {
-            for (var dk in obj) {
-              if (dk === 'comment' || dk === 'comments' || dk === 'music' || dk === 'feed' || dk === 'related') continue;
-              if (typeof obj[dk] === 'string' && obj[dk].length > 20 && (obj[dk].indexOf('http') === 0)) {
-                if (obj[dk].match(/\.(jpg|png|webp|jpeg)/i) && obj[dk].indexOf('yximgs') > 0) result.push(obj[dk]);
-              }
-              result = result.concat(deepFindImages(obj[dk], depth + 1));
-            }
-          }
-          return result;
-        }
-        var imgs = deepFindImages(nd, 0);
-        if (imgs && imgs.length) { video.images = imgs.slice(0, 50); }
-      } catch(e) {}
-    }
-  }
-  if (!video.images || !video.images.length) {
-    var initMatch = html.match(/window\.INIT_STATE\s*=\s*(\{[\s\S]*?\});/);
-    if (initMatch) {
-      try {
-        var initRaw = initMatch[1].replace(/\\u002F/g, '/').replace(/\\u003E/g, '>').replace(/\\u003C/g, '<');
-        var photoChunks = initRaw.match(/"url"\s*:\s*"([^"]+\.(?:jpg|png|webp)[^"]*)"/g);
-        if (photoChunks) {
-          var initImgs = [];
-          for (var pi = 0; pi < photoChunks.length; pi++) {
-            var um = photoChunks[pi].match(/"url"\s*:\s*"([^"]+)"/);
-            if (um && um[1].indexOf('yximgs') > 0) initImgs.push(um[1]);
-          }
-          if (initImgs.length) video.images = initImgs.slice(0, 50);
-        }
-      } catch(e) {}
-    }
-  }
   var finalAuthor = null;
 
   // 
@@ -745,7 +629,6 @@ async function parseKuaishou(originalUrl) {
           if (!video.videoUrl && d.url) video.videoUrl = d.url;
           if (!video.cover && d.cover) video.cover = d.cover;
           if (!video.title && d.title) video.title = d.title;
-          if (!video.images && d.images && d.images.length) video.images = d.images.slice(0, 50);
         }
       }
     } catch (e) {}
@@ -754,16 +637,16 @@ async function parseKuaishou(originalUrl) {
   // 
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
-  if (!video.videoUrl && !video.cover && (!video.images || !video.images.length)) return fail('未提取到快手视频地址');
+  if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
 
   return ok('kuaishou', {
-    type: (video.images && video.images.length > 0 && !video.videoUrl) ? 'image' : 'video',
+    type: 'video',
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
     url: video.videoUrl || '',
-    images: video.images || []
+    images: []
   });
 }
 
@@ -1157,7 +1040,7 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // TikTok 页面里第一个用户是分享者/当前登录用户，最后一个才是视频原作者
+  // TikTok 椤甸潰閲岀涓€涓敤鎴锋槸鍒嗕韩鑰?褰撳墠鐧诲綍鐢ㄦ埛锛屾渶鍚庝竴涓墠鏄棰戝師浣滆€?
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
@@ -1177,7 +1060,7 @@ async function parseTiktok(originalUrl) {
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
-  // tikwm.com 兜底（解决非浏览器请求 403 问题）
+  // tikwm.com 鍏滃簳锛堣В鍐抽潪娴忚鍣ㄨ姹?403 闂锛?
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -1211,13 +1094,13 @@ async function parseXigua(originalUrl) {
 
   var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '';
 
-  // og:title / og:image（西瓜视频用 name= 而不是 property=）
+  // og:title / og:image锛堣タ鐡滆棰戠敤 name= 鑰屼笉鏄?property=锛?
   var tMatch = html.match(/<meta[^>]*name="og:title"[^>]*content="([^"]+)"/);
   if (tMatch) title = tMatch[1].replace(/\|\s*西瓜视频$/, '').trim();
   var iMatch = html.match(/<meta[^>]*name="og:image"[^>]*content="([^"]+)"/);
   if (iMatch) cover = iMatch[1];
 
-  // media_user 作者信息
+  // media_user 浣滆€呬俊鎭?
   var muMatch = html.match(/"media_user":\{[^}]+\}/);
   if (muMatch) {
     var mu = muMatch[0];
@@ -1292,7 +1175,7 @@ async function parseAcfun(originalUrl) {
     } catch(e) {}
   }
 
-  // 解析 var playInfo（视频流地址）
+  // 解析 var playInfo锛堣棰戞祦鍦板潃锛?
   var piStart = html.indexOf('var playInfo =');
   if (piStart >= 0) {
     var ps = piStart + 'var playInfo ='.length;
@@ -1340,7 +1223,7 @@ async function parseAcfun(originalUrl) {
 
 // ===== 微博 =====
 async function parseWeibo(originalUrl) {
-  // 直接通过 BUGPK 代理解析（CF Worker IP 无法获取微博视频数据）
+  // 直接通过 BUGPK 代理解析（CF Worker IP 鏃犳硶鑾峰彇微博瑙嗛鏁版嵁锛?
   try {
     var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -1681,6 +1564,7 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
 
 
 
