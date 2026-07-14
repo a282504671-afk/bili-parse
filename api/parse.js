@@ -544,23 +544,38 @@ async function parseKuaishou(originalUrl) {
     }
     // extract album images from Kuaishou atlas pages
     try {
-      var atlasUrls = html.match(/https?:\/\/[^"'\s]*yximgs\.com\/ufile\/atlas\/[^"'\s]+?\.jpg/g);
-      if (atlasUrls && atlasUrls.length) {
-        for (var ai = 0; ai < atlasUrls.length; ai++) {
-          var clean = atlasUrls[ai].replace(/&amp;/g, '&');
-          if (images.indexOf(clean) < 0) images.push(clean);
+      if (!images || !images.length) {
+        var photoUrlsMatch = html.match(/"photoUrls"\s*:\s*\[/);
+        if (photoUrlsMatch) {
+          var puStart = photoUrlsMatch.index;
+          var puEnd = html.indexOf(']', puStart);
+          if (puEnd > puStart) {
+            var parsed = JSON.parse(html.substring(puStart, puEnd + 1));
+            if (Array.isArray(parsed)) { images = parsed.filter(function(u) { return typeof u === 'string' && u.length > 20; }); }
+          }
         }
       }
-      if (images.length === 0) {
-        var imgMatch = html.match(/"images"\s*:\s*\[([^\]]+)\]/);
-        if (imgMatch) {
-          var urls = imgMatch[1].match(/"https?:\/\/[^"]*yximgs\.com[^"]*"/g);
-          if (urls) {
-            for (var ui = 0; ui < urls.length; ui++) {
-              var cl = urls[ui].replace(/"/g, '').replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-              if (cl.indexOf('.jpg') > 0 && images.indexOf(cl) < 0) images.push(cl);
-            }
+      if (!images || !images.length) {
+        var photosMatch = html.match(/"photos"\s*:\s*\[/);
+        if (photosMatch) {
+          var phStart = photosMatch.index;
+          var phEnd = html.indexOf(']', phStart);
+          if (phEnd > phStart) {
+            var rawPhotos = JSON.parse(html.substring(phStart, phEnd + 1).replace(/undefined/g, 'null'));
+            images = rawPhotos.map(function(item) { if (typeof item === 'string') return item; return item.url || item.originUrl || item.thumbnail || ''; }).filter(function(u) { return u && u.length > 10; });
           }
+        }
+      }
+      if (!images || !images.length) {
+        var upicUrls = html.match(/https?:\/\/[^"'\s]*yximgs\.com\/upic\/[^"'\s]+\.(?:jpg|jpeg|png|webp)[^"'\s]*/gi);
+        if (upicUrls && upicUrls.length) {
+          images = upicUrls.filter(function(u) { return u.indexOf('/upic/') > 0 && u.indexOf('.jpg') > 0 && u.indexOf('icon') < 0 && u.indexOf('avatar') < 0; }).slice(0, 50);
+        }
+      }
+      if (!images || !images.length) {
+        var atlasUrls = html.match(/https?:\/\/[^"'\s]*yximgs\.com\/ufile\/atlas\/[^"'\s]+\.(?:jpg|jpeg|png|webp)[^"'\s]*/gi);
+        if (atlasUrls && atlasUrls.length) {
+          images = atlasUrls.slice(0, 50);
         }
       }
     } catch(e) {}
@@ -719,7 +734,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
         if (!title) title = noteData.title || noteData.desc || '';
         if (!authorName) authorName = (noteData.user && noteData.user.nickname) || '';
         if (!authorAvatar) authorAvatar = (noteData.user && noteData.user.avatar) || '';
-        if (!authorId) authorId = (noteData.user && (noteData.user.userId || noteData.user.id)) || '';
+        if (!authorId) authorId = (noteData.user && (noteData.user.userId || noteData.user.uniqueId || noteData.user.shortId || noteData.user.id)) || '';
         if (!cover) cover = (noteData.cover && (noteData.cover.urlDefault || noteData.cover.url)) || '';
         if (noteData.imageList && noteData.imageList.length) {
           noteData.imageList.forEach(function(img) {
@@ -963,7 +978,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                 if (!authorName) authorName = (note.user && note.user.nickname) || '';
                 if (!authorAvatar) authorAvatar = (note.user && note.user.avatar) || '';
                 if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || '';
-                if (!authorId && note.user) authorId = note.user.userId || '';
+                if (!authorId && note.user) authorId = note.user.userId || note.user.uniqueId || note.user.shortId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
                   if (candidates.length) { for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
