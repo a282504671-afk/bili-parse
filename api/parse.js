@@ -1030,7 +1030,6 @@ async function parseWeixin(originalUrl) {
           if (avm) authorAvatar = avm[1];
         }
         return ok('weixin', {
-          _source: 'html',
           type: 'video', title: title || desc || '', desc: desc || title || '',
           author: { name: author || '', id: '', avatar: authorAvatar || '' },
           cover: cover || '', url: videoUrl, images: [],
@@ -1038,25 +1037,6 @@ async function parseWeixin(originalUrl) {
       }
     } catch(e) { lastErr = e; }
   }
-
-  // 尝试 52api 解析
-  try {
-    var apiRes = await fetch('https://www.52api.cn/api/sph?key=SgAYGMs3AxwD47faiPUKUzM06D&url=' + encodeURIComponent(originalUrl), {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-    });
-    if (apiRes.ok) {
-      var apiJson = await apiRes.json();
-      if (apiJson.code === 200 && apiJson.data && apiJson.data.video_url) {
-        var d = apiJson.data;
-        return ok('weixin', {
-          _source: '52api',
-          type: 'video', title: d.video_title || d.video_desc || '', desc: d.video_desc || d.video_title || '',
-          author: { name: d.video_author || '', id: '', avatar: d.video_avatar || '' },
-          cover: d.video_cover || '', url: d.video_url || '', images: [],
-        });
-      }
-    }
-  } catch(e) {}
 
   // 全部HTML抓取失败，走BugPK
   try {
@@ -1068,7 +1048,6 @@ async function parseWeixin(originalUrl) {
       if (json.code === 200 && json.data && json.data.url) {
         var d = json.data;
         return ok('weixin', {
-          _source: 'bugpk',
           type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
           author: { name: (d.author && d.author.name) || d.nickname || d.author_name || '', id: (d.author && d.author.id) || d.author_id || d.uid || d.user_id || '', avatar: (d.author && d.author.avatar) || d.avatar || d.author_avatar || d.face || '' },
           cover: d.cover || '', url: d.url || '', images: [],
@@ -1211,32 +1190,7 @@ module.exports = async (req, res) => {
               }
             }
           }
-        } catch(e) { dbgInfo.iesdouyinApiError = String(e);
-        
-        // 检查iesdouyin.com/share/video/页面数据
-        try {
-          var iesdUrl2 = "https://www.iesdouyin.com/share/video/" + dbgItemId + "/";
-          var iesdHtml2 = await fetchHtml(iesdUrl2, { Referer: "https://www.douyin.com/" });
-          var iesdItem2 = extractDouyinDataFromHtml(iesdHtml2);
-          dbgInfo.iesdHasItem = !!iesdItem2;
-          if (iesdItem2) {
-            var iesdV2 = iesdItem2.video || {};
-            dbgInfo.iesdHasDownloadAddr = !!iesdV2.download_addr;
-            dbgInfo.iesdHasBitRate = !!(iesdV2.bit_rate && iesdV2.bit_rate.length > 0);
-            dbgInfo.iesdBitRateCount = (iesdV2.bit_rate || []).length;
-            dbgInfo.iesdPlayAddrUrlCount = (iesdV2.play_addr && iesdV2.play_addr.url_list || []).length;
-            dbgInfo.iesdPlayAddrUrls = (iesdV2.play_addr && iesdV2.play_addr.url_list || []).map(function(u) { return u.replace(/\\u002F/g, "/").substring(0, 120); });
-            if (iesdV2.bit_rate && iesdV2.bit_rate.length > 0) {
-              dbgInfo.iesdBitRates = iesdV2.bit_rate.map(function(br) { 
-                return { gear: br.gear_name || "", bitrate: br.bit_rate || 0, urlCount: (br.play_addr && br.play_addr.url_list || []).length };
-              });
-            }
-            if (iesdV2.download_addr) {
-              dbgInfo.iesdDownloadAddrUrls = (iesdV2.download_addr.url_list || []).map(function(u) { return u.replace(/\\u002F/g, "/").substring(0, 120); });
-            }
-          }
-        } catch(e) { dbgInfo.iesdError = String(e); }
- }
+        } catch(e) { dbgInfo.iesdouyinApiError = String(e); }
         res.statusCode = 200;
         res.end(JSON.stringify({ code: 200, msg: '调试信息', debug: dbgInfo }));
         return;
@@ -1274,7 +1228,6 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
-
 
 
 
