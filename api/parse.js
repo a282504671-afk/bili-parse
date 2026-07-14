@@ -1021,6 +1021,14 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
   }
   if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
 
+  // De-watermark all Xiaohongshu images
+  for (var di = 0; di < images.length; di++) {
+    var iu = images[di];
+    if (iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0) {
+      images[di] = iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/(notes_pre_post\/[^!?]+).*$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1');
+    }
+  }
+
   return ok('xiaohongshu', {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
