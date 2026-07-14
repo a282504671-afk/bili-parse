@@ -125,11 +125,7 @@ async function parseDouyin(originalUrl) {
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
 
-  if (isNote && itemId) {
-    var noteResult = await parseDouyinNote(itemId);
-    if (noteResult) return ok("douyin", noteResult);
-    // 如果笔记解析失败，退回视频解析流程
-  }
+  // Note URLs handled by iesdouyin parsing below (SSR has images + author.unique_id)
 
   if (itemId) {
     // 关键：直接用iesdouyin.com/share/video/页面提取数据（不跟redirect）
@@ -140,11 +136,7 @@ async function parseDouyin(originalUrl) {
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
     // 重定向后重新检测是否为笔记/图集
-    if (realUrl.indexOf("/note/") >= 0) {
-      var noteResult = await parseDouyinNote(itemId);
-      if (noteResult) return ok("douyin", noteResult);
-    }
-    realUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
+    // Note/slides: let iesdouyin parsing handle it
   }
 
   var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
