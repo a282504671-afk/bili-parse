@@ -119,13 +119,10 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
-  // 检查是否为笔记/图集页面
-  var isNote = originalUrl.indexOf("/note/") >= 0;
   // 解析item_id
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
 
-  // Note URLs handled by iesdouyin parsing below (SSR has images + author.unique_id)
 
   if (itemId) {
     // 关键：直接用iesdouyin.com/share/video/页面提取数据（不跟redirect）
@@ -135,8 +132,8 @@ async function parseDouyin(originalUrl) {
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
-    // 重定向后重新检测是否为笔记/图集
-    // Note/slides: let iesdouyin parsing handle it
+
+    realUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
   }
 
   var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
@@ -509,7 +506,7 @@ async function parseKuaishou(originalUrl) {
 
   // 
   function extractVideo(html) {
-    var videoUrl = '', title = '', cover = '', images = [];
+    var videoUrl = '', title = '', cover = '';
     var patterns = [/"srcUrl"\s*:\s*"([^"]+)"/, /"playUrl"\s*:\s*"([^"]+)"/, /"url"\s*:\s*"([^"]*\.(?:mp4|m3u8)[^"]*)"/, /video-url="([^"]+)"/, /data-url="([^"']+)"/];
     for (var i = 0; i < patterns.length; i++) {
       var m = html.match(patterns[i]);
@@ -534,44 +531,7 @@ async function parseKuaishou(originalUrl) {
       if (!tMatch) tMatch = html.match(/"title"\s*:\s*"([^"]+)"\s*,\s*"coverUrl"/);
       if (tMatch) title = tMatch[1];
     }
-    // extract album images from Kuaishou atlas pages
-    try {
-      if (!images || !images.length) {
-        var photoUrlsMatch = html.match(/"photoUrls"\s*:\s*\[/);
-        if (photoUrlsMatch) {
-          var puStart = photoUrlsMatch.index;
-          var puEnd = html.indexOf(']', puStart);
-          if (puEnd > puStart) {
-            var parsed = JSON.parse(html.substring(puStart, puEnd + 1));
-            if (Array.isArray(parsed)) { images = parsed.filter(function(u) { return typeof u === 'string' && u.length > 20; }); }
-          }
-        }
-      }
-      if (!images || !images.length) {
-        var photosMatch = html.match(/"photos"\s*:\s*\[/);
-        if (photosMatch) {
-          var phStart = photosMatch.index;
-          var phEnd = html.indexOf(']', phStart);
-          if (phEnd > phStart) {
-            var rawPhotos = JSON.parse(html.substring(phStart, phEnd + 1).replace(/undefined/g, 'null'));
-            images = rawPhotos.map(function(item) { if (typeof item === 'string') return item; return item.url || item.originUrl || item.thumbnail || ''; }).filter(function(u) { return u && u.length > 10; });
-          }
-        }
-      }
-      if (!images || !images.length) {
-        var upicUrls = html.match(/https?:\/\/[^"'\s]*yximgs\.com\/upic\/[^"'\s]+\.(?:jpg|jpeg|png|webp)[^"'\s]*/gi);
-        if (upicUrls && upicUrls.length) {
-          images = upicUrls.filter(function(u) { return u.indexOf('/upic/') > 0 && u.indexOf('.jpg') > 0 && u.indexOf('icon') < 0 && u.indexOf('avatar') < 0; }).slice(0, 50);
-        }
-      }
-      if (!images || !images.length) {
-        var atlasUrls = html.match(/https?:\/\/[^"'\s]*yximgs\.com\/ufile\/atlas\/[^"'\s]+\.(?:jpg|jpeg|png|webp)[^"'\s]*/gi);
-        if (atlasUrls && atlasUrls.length) {
-          images = atlasUrls.slice(0, 50);
-        }
-      }
-    } catch(e) {}
-    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '', images: images };
+    return { videoUrl: videoUrl || '', title: title || '', cover: cover || '' };
   }
 
   // 
@@ -658,6 +618,11 @@ async function parseKuaishou(originalUrl) {
           if (!video.videoUrl && d.url) video.videoUrl = d.url;
           if (!video.cover && d.cover) video.cover = d.cover;
           if (!video.title && d.title) video.title = d.title;
+          // 提取图集图片
+          if (d.images && d.images.length > 0) {
+            if (!video.images) video.images = [];
+            video.images = d.images.filter(u => u && !u.includes('notinline') && u.startsWith('http'));
+          }
         }
       }
     } catch (e) {}
@@ -668,14 +633,15 @@ async function parseKuaishou(originalUrl) {
 
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
 
+  var ksImages = (video.images && video.images.length > 0) ? video.images : [];
   return ok('kuaishou', {
-    type: (video.images && video.images.length > 0 && !video.videoUrl) ? 'image' : 'video',
+    type: ksImages.length ? 'image' : 'video',
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
-    url: video.videoUrl || '',
-    images: video.images || []
+    url: ksImages.length ? '' : (video.videoUrl || ''),
+    images: ksImages
   });
 }
 
@@ -726,7 +692,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
         if (!title) title = noteData.title || noteData.desc || '';
         if (!authorName) authorName = (noteData.user && noteData.user.nickname) || '';
         if (!authorAvatar) authorAvatar = (noteData.user && noteData.user.avatar) || '';
-        if (!authorId) authorId = (noteData.user && (noteData.user.uniqueId || noteData.user.shortId || noteData.user.userId || noteData.user.id)) || '';
+        if (!authorId) authorId = (noteData.user && (noteData.user.userId || noteData.user.id)) || '';
         if (!cover) cover = (noteData.cover && (noteData.cover.urlDefault || noteData.cover.url)) || '';
         if (noteData.imageList && noteData.imageList.length) {
           noteData.imageList.forEach(function(img) {
@@ -970,7 +936,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                 if (!authorName) authorName = (note.user && note.user.nickname) || '';
                 if (!authorAvatar) authorAvatar = (note.user && note.user.avatar) || '';
                 if (!cover && note.cover) cover = note.cover.urlDefault || note.cover.url || '';
-                if (!authorId && note.user) authorId = note.user.uniqueId || note.user.shortId || note.user.userId || '';
+                if (!authorId && note.user) authorId = note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
                   if (candidates.length) { for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
@@ -1593,7 +1559,6 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
-
 
 
 
