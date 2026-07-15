@@ -1082,6 +1082,14 @@ async function parseTiktok(originalUrl) {
   var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
   var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
   var title = descMatch ? descMatch[1] : '';
+  var ttkCookies = '';
+  try {
+    var ckResp = await fetch(realUrl, { method: 'HEAD', headers: { 'User-Agent': UA, 'Accept': 'text/html' }, redirect: 'manual' });
+    if (ckResp.headers) {
+      var sc = ckResp.headers.get('Set-Cookie');
+      if (sc) ttkCookies = sc.split(';')[0];
+    }
+  } catch(e) {}
 
   // 多种画质提取
   var videoUrl = '';
@@ -1124,10 +1132,11 @@ async function parseTiktok(originalUrl) {
   if (!videoUrl || videoUrl.indexOf('downloadAddr') < 0) {
     var vidMatch = realUrl.match(/video\/(\d+)/);
     if (vidMatch) {
+      var vid = vidMatch[1];
       // 2. TikTok 移动端 API（可获取 _original.mp4 原画质）
       try {
         var mobileApi = await fetch('https://api22-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=' + vid + '&version_code=34.0.0&language=en&app_name=musically', {
-          headers: { 'User-Agent': 'com.zhiliaoapp.musically/2024605030 (Linux; U; Android 12; en; Pixel 6; Build/SQ3A.220705.003.A1; Cronet/TTVERSION)', 'Accept': 'application/json', 'Referer': 'https://www.tiktok.com/' },
+          headers: { 'User-Agent': 'com.zhiliaoapp.musically/2024605030 (Linux; U; Android 12; en; Pixel 6; Build/SQ3A.220705.003.A1; Cronet/TTVERSION)', 'Accept': 'application/json', 'Referer': 'https://www.tiktok.com/', 'Cookie': ttkCookies },
         });
         if (mobileApi.ok) {
           var mobileJson = await mobileApi.json();
