@@ -632,16 +632,26 @@ async function parseKuaishou(originalUrl) {
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
-  // 兜底：从页面 JSON 数据中取真实图片
+  // 兜底：从页面 JSON 数据中取真实图片（只取第一张不重复）
   if ((!video.images || !video.images.length) && !video.videoUrl) {
     var photoMatch = html.match(/\"photo\"\s*:\s*\{[^}]+\"coverUrls\"\s*:\s*\[([^\]]+)\]/);
     if (photoMatch) {
       var urls = photoMatch[1].match(/\"url\"\s*:\s*\"([^\"]+)\"/g);
       if (urls && urls.length > 0) {
         video.images = [];
+        var seenPaths = {};
         urls.forEach(function(u) {
           var pu = u.match(/\"url\"\s*:\s*\"([^\"]+)\"/);
-          if (pu) video.images.push(pu[1].replace(/\\u002F/g, '/'));
+          if (pu) {
+            var decoded = pu[1].replace(/\\u002F/g, '/');
+            var pathMatch = decoded.match(/\/upic\/[^?]+/);
+            if (pathMatch && !seenPaths[pathMatch[0]]) {
+              seenPaths[pathMatch[0]] = true;
+              video.images.push(decoded);
+            } else if (!pathMatch) {
+              video.images.push(decoded);
+            }
+          }
         });
       }
     }
@@ -1060,27 +1070,57 @@ async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // TikTok 椤甸潰閲岀涓€涓敤鎴锋槸鍒嗕韩鑰?褰撳墠鐧诲綍鐢ㄦ埛锛屾渶鍚庝竴涓墠鏄棰戝師浣滆€?
+  // 提取作者信息和封面
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
-
-  var paMatch = html.match(/"playAddr":"([^"]+)"/);
   var coverMatch = html.match(/"cover":"([^"]+)"/);
   var descMatch = html.match(/"desc":"([^"]+)"/);
 
-  // 
   var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
   var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
   var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
-
-  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
   var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
   var title = descMatch ? descMatch[1] : '';
 
+  // 多种画质提取
+  var videoUrl = '';
+  // 1. downloadAddr（画质最高）
+  var dlMatch = html.match(/"downloadAddr":"([^"]+)"/);
+  if (dlMatch) videoUrl = dlMatch[1].replace(/\\u002F/g, '/');
+  // 2. bitrateInfo 最高码率
+  if (!videoUrl) {
+    var brMatch = html.match(/bitrateInfo\s*:\s*\[([^\]]+)\]/);
+    if (brMatch) {
+      var brItems = (',' + brMatch[1]).match(/\{[^}]+\}/g);
+      if (brItems && brItems.length) {
+        var bestBr = '', bestBit = 0;
+        brItems.forEach(function(item) {
+          var br = item.match(/"bitrate":(\d+)/);
+          var urlM = item.match(/"playAddr":\{"url_list":\["([^"]+)"/);
+          if (br && urlM && parseInt(br[1]) > bestBit) {
+            bestBit = parseInt(br[1]);
+            bestBr = urlM[1].replace(/\\u002F/g, '/');
+          }
+        });
+        if (bestBr) videoUrl = bestBr;
+      }
+    }
+  }
+  // 3. playAddr
+  if (!videoUrl) {
+    var paMatch = html.match(/"playAddr":"([^"]+)"/);
+    if (paMatch) videoUrl = paMatch[1].replace(/\\u002F/g, '/');
+  }
+  // 4. url_list
+  if (!videoUrl) {
+    var ulMatch = html.match(/"url_list":\["([^"]+)"\]/);
+    if (ulMatch) videoUrl = ulMatch[1].replace(/\\u002F/g, '/');
+  }
+
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
-  // tikwm.com 鍏滃簳锛堣В鍐抽潪娴忚鍣ㄨ姹?403 闂锛?
+  // 5. TikWM API
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -1089,7 +1129,11 @@ async function parseTiktok(originalUrl) {
       var tikJson = await tikRes.json();
       if (tikJson.code === 0 && tikJson.data) {
         var td = tikJson.data;
-        if (td.hdplay || td.play || td.url) videoUrl = td.hdplay || td.play || td.url;
+        // downloadAddr 优先（原画最高）
+        if (!videoUrl && td.hdplay) videoUrl = td.hdplay;
+        if (!videoUrl && td.play) videoUrl = td.play;
+        if (!videoUrl && td.url) videoUrl = td.url;
+        if (videoUrl && videoUrl.indexOf('watermark') >= 0 && td.hdplay) videoUrl = td.hdplay;
         if (!authorName) authorName = (td.author && td.author.nickname) || '';
         if (!authorId) authorId = (td.author && td.author.unique_id) || '';
         if (!authorAvatar) authorAvatar = (td.author && td.author.avatar) || '';
@@ -1098,6 +1142,12 @@ async function parseTiktok(originalUrl) {
       }
     }
   } catch(e) {}
+
+  // 6. 去水印提升画质
+  if (videoUrl.indexOf('watermark') >= 0) {
+    var noWmUrl = videoUrl.replace(/watermark[^\/]*\//, '').replace(/[?&]watermark=[^&]+/, '');
+    if (noWmUrl && noWmUrl !== videoUrl) videoUrl = noWmUrl;
+  }
 
   return ok('tiktok', {
     type: 'video', title: title || '', desc: title || '',
