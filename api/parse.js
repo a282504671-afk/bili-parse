@@ -956,15 +956,8 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                 if (!authorId && note.user) authorId = note.user.userId || '';
                 if (note.video && note.video.media && note.video.media.stream) {
                   var candidates = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (candidates.length) { var best301="",best309="",best258=""; for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { var u = urls[ui]; if (u) { if (u.indexOf("sns-video-zl") > 0 || u.indexOf("sns-video-hw") > 0) { if (u.indexOf("_301")>0) { if (!best301) best301=u; } else if (u.indexOf("_309")>0) { if (!best309) best309=u; } else if (u.indexOf("_258")>0) { if (!best258) best258=u; } else if (!best309 && !best258) { best309=u; } } } } } videoUrl = best301||best309||best258||""; }
+                  if (candidates.length) { for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
-                // HD 1080p from mediaV2.opaque1
-                if (note.video && note.video.media && note.video.media.mediaV2) {
-                  try { var _m2 = JSON.parse(note.video.media.mediaV2);
-                    if (_m2 && _m2.video && _m2.video.opaque1 && _m2.video.opaque1.hd_screencast_stream) {
-                      var _hu = _m2.video.opaque1.hd_screencast_stream;
-                      if (_hu) videoUrl = _hu.replace(/^http:/, "https:"); } }
-                  catch(e) {} }
                 if (note.imageList && note.imageList.length) {
                   note.imageList.forEach(function(img) { var iu = img.urlDefault || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
                 }
@@ -996,15 +989,8 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                 if (!cover) cover = note.cover && (note.cover.url_default || note.cover.url) || '';
                 if (!videoUrl && note.video && note.video.media && note.video.media.stream) {
                   var c = note.video.media.stream.h264 || note.video.media.stream.h265 || [];
-                  if (c.length) { var best301="",best309="",best258=""; for (var ci = 0; ci < c.length; ci++) { var cdd = c[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { var u = urls[ui]; if (u) { if (u.indexOf("sns-video-zl") > 0 || u.indexOf("sns-video-hw") > 0) { if (u.indexOf("_301")>0) { if (!best301) best301=u; } else if (u.indexOf("_309")>0) { if (!best309) best309=u; } else if (u.indexOf("_258")>0) { if (!best258) best258=u; } else if (!best309 && !best258) { best309=u; } } } } } videoUrl = best301||best309||best258||""; }
+                  if (c.length) { for (var ci = 0; ci < c.length; ci++) { var cdd = c[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
-                // HD 1080p from mediaV2.opaque1
-                if (note.video && note.video.media && note.video.media.mediaV2) {
-                  try { var _m2 = JSON.parse(note.video.media.mediaV2);
-                    if (_m2 && _m2.video && _m2.video.opaque1 && _m2.video.opaque1.hd_screencast_stream) {
-                      var _hu = _m2.video.opaque1.hd_screencast_stream;
-                      if (_hu) videoUrl = _hu.replace(/^http:/, "https:"); } }
-                  catch(e) {} }
                 if (!images.length && note.image_list && note.image_list.length) {
                   note.image_list.forEach(function(img) { var iu = img.url_default || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
                 }
@@ -1020,16 +1006,14 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
   if (!videoUrl && !images.length) {
     var muRegex = /"masterUrl"\s*:\s*"([^"]+)"/g;
     var muMatch;
-    var bestUrl301='',bestUrl='';
+    var bestUrl = '';
     while ((muMatch = muRegex.exec(html)) !== null) {
       var mu = muMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
       if (mu.indexOf('http://') === 0) mu = 'https://' + mu.substring(7);
-      if (mu.indexOf('_301') > 0) { bestUrl301 = mu; break; }
-      else if (mu.indexOf('_309') > 0) { if (!bestUrl) bestUrl = mu; }
-      else if (mu.indexOf('_258') > 0 && !bestUrl) bestUrl = mu;
+      if (mu.indexOf('_309') > 0) { bestUrl = mu; break; }
+      if (mu.indexOf('_258') > 0 && !bestUrl) bestUrl = mu;
     }
-    if (bestUrl301) videoUrl = bestUrl301;
-    else if (bestUrl) videoUrl = bestUrl;
+    if (bestUrl) videoUrl = bestUrl;
   }
 
   // xhscdn stream direct URL search (only sns-video-zl/sns-video-hw)
