@@ -1086,7 +1086,7 @@ async function parseTiktok(originalUrl) {
   // 多种画质提取
   var videoUrl = '';
   // 1. downloadAddr（画质最高）
-  var dlMatch = html.match(/"downloadAddr":"([^"]+)"/);
+  var dlMatch = html.match(/"downloadAddr":\{"url_list":\["([^"]+)"/) || html.match(/"downloadAddr":"([^"]+)"/);
   if (dlMatch) videoUrl = dlMatch[1].replace(/\\u002F/g, '/');
   // 2. bitrateInfo 最高码率
   if (!videoUrl) {
