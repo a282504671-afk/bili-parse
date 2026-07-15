@@ -959,8 +959,8 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                   if (candidates.length) { var best301="",best309="",best258=""; for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { var u = urls[ui]; if (u) { if (u.indexOf("sns-video-zl") > 0 || u.indexOf("sns-video-hw") > 0) { if (u.indexOf("_301")>0) { if (!best301) best301=u; } else if (u.indexOf("_309")>0) { if (!best309) best309=u; } else if (u.indexOf("_258")>0) { if (!best258) best258=u; } else if (!best309 && !best258) { best309=u; } } } } } videoUrl = best301||best309||best258||""; }
                 }
                 // HD 1080p from mediaV2.opaque1
-                if (note.video && note.video.mediaV2) {
-                  try { var _m2 = JSON.parse(note.video.mediaV2);
+                if (note.video && note.video.media && note.video.media.mediaV2) {
+                  try { var _m2 = JSON.parse(note.video.media.mediaV2);
                     if (_m2 && _m2.video && _m2.video.opaque1 && _m2.video.opaque1.hd_screencast_stream) {
                       var _hu = _m2.video.opaque1.hd_screencast_stream;
                       if (_hu) videoUrl = _hu.replace(/^http:/, "https:"); } }
@@ -999,8 +999,8 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                   if (c.length) { var best301="",best309="",best258=""; for (var ci = 0; ci < c.length; ci++) { var cdd = c[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { var u = urls[ui]; if (u) { if (u.indexOf("sns-video-zl") > 0 || u.indexOf("sns-video-hw") > 0) { if (u.indexOf("_301")>0) { if (!best301) best301=u; } else if (u.indexOf("_309")>0) { if (!best309) best309=u; } else if (u.indexOf("_258")>0) { if (!best258) best258=u; } else if (!best309 && !best258) { best309=u; } } } } } videoUrl = best301||best309||best258||""; }
                 }
                 // HD 1080p from mediaV2.opaque1
-                if (note.video && note.video.mediaV2) {
-                  try { var _m2 = JSON.parse(note.video.mediaV2);
+                if (note.video && note.video.media && note.video.media.mediaV2) {
+                  try { var _m2 = JSON.parse(note.video.media.mediaV2);
                     if (_m2 && _m2.video && _m2.video.opaque1 && _m2.video.opaque1.hd_screencast_stream) {
                       var _hu = _m2.video.opaque1.hd_screencast_stream;
                       if (_hu) videoUrl = _hu.replace(/^http:/, "https:"); } }
