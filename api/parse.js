@@ -119,10 +119,17 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
+  // 检查是否为笔记/图集页面
+  var isNote = originalUrl.indexOf("/note/") >= 0;
   // 解析item_id
   var itemId = extractDouyinItemId(originalUrl);
   var realUrl = originalUrl;
 
+  if (isNote && itemId) {
+    var noteResult = await parseDouyinNote(itemId);
+    if (noteResult) return ok("douyin", noteResult);
+    // 如果笔记解析失败，退回视频解析流程
+  }
 
   if (itemId) {
     // 关键：直接用iesdouyin.com/share/video/页面提取数据（不跟redirect）
@@ -132,7 +139,11 @@ async function parseDouyin(originalUrl) {
     realUrl = await resolveRedirect(originalUrl);
     itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
     if (!itemId) return fail('未能从链接中提取视频ID');
-
+    // 重定向后重新检测是否为笔记/图集
+    if (realUrl.indexOf("/note/") >= 0) {
+      var noteResult = await parseDouyinNote(itemId);
+      if (noteResult) return ok("douyin", noteResult);
+    }
     realUrl = 'https://www.iesdouyin.com/share/video/' + itemId + '/';
   }
 
@@ -316,12 +327,12 @@ async function parseDouyin(originalUrl) {
     } catch(e) {}
   }
 return ok('douyin', {
-    type: noteIsVideoType ? 'video' : (videoUrl && images.length <= 1 ? 'video' : (images.length ? 'image' : 'video')),
+    type: images.length ? 'image' : 'video',
     title: title,
     desc: title || '',
     author: { name: authorName, id: authorId, avatar: avatar },
     cover: cover,
-    url: images.length ? '' : playUrl,
+    url: playUrl,
     images: images,
   });
 }
@@ -618,11 +629,6 @@ async function parseKuaishou(originalUrl) {
           if (!video.videoUrl && d.url) video.videoUrl = d.url;
           if (!video.cover && d.cover) video.cover = d.cover;
           if (!video.title && d.title) video.title = d.title;
-          // 提取图集图片
-          if (d.images && d.images.length > 0) {
-            if (!video.images) video.images = [];
-            video.images = d.images.filter(u => u && !u.includes('notinline') && u.startsWith('http'));
-          }
         }
       }
     } catch (e) {}
@@ -632,43 +638,15 @@ async function parseKuaishou(originalUrl) {
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
   if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
-  // 兜底：从页面 JSON 数据中取真实图片（只取第一张不重复）
-  if ((!video.images || !video.images.length) && !video.videoUrl) {
-    var photoMatch = html.match(/\"photo\"\s*:\s*\{[^}]+\"coverUrls\"\s*:\s*\[([^\]]+)\]/);
-    if (photoMatch) {
-      var urls = photoMatch[1].match(/\"url\"\s*:\s*\"([^\"]+)\"/g);
-      if (urls && urls.length > 0) {
-        video.images = [];
-        var seenPaths = {};
-        urls.forEach(function(u) {
-          var pu = u.match(/\"url\"\s*:\s*\"([^\"]+)\"/);
-          if (pu) {
-            var decoded = pu[1].replace(/\\u002F/g, '/');
-            var pathMatch = decoded.match(/\/upic\/[^?]+/);
-            if (pathMatch && !seenPaths[pathMatch[0]]) {
-              seenPaths[pathMatch[0]] = true;
-              video.images.push(decoded);
-            } else if (!pathMatch) {
-              video.images.push(decoded);
-            }
-          }
-        });
-      }
-    }
-    if ((!video.images || !video.images.length) && video.cover && video.cover.indexOf('yximgs') >= 0) {
-      video.images = [video.cover];
-    }
-  }
 
-    var ksImages = (video.images && video.images.length > 0) ? video.images : [];
   return ok('kuaishou', {
-    type: ksImages.length ? 'image' : 'video',
+    type: 'video',
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
-    url: ksImages.length ? '' : (video.videoUrl || ''),
-    images: ksImages
+    url: video.videoUrl || '',
+    images: []
   });
 }
 
@@ -969,7 +947,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                   if (candidates.length) { for (var ci = 0; ci < candidates.length; ci++) { var cdd = candidates[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
                 if (note.imageList && note.imageList.length) {
-                  note.imageList.forEach(function(img) { var iu = img.urlDefault || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
+                  note.imageList.forEach(function(img) { images.push(img.urlDefault || img.url || ''); });
                 }
               }
             }
@@ -1002,7 +980,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
                   if (c.length) { for (var ci = 0; ci < c.length; ci++) { var cdd = c[ci]; var urls = [cdd.masterUrl, cdd.url].concat(cdd.backupUrls || []); for (var ui = 0; ui < urls.length; ui++) { if (urls[ui] && (urls[ui].indexOf("sns-video-zl") > 0 || urls[ui].indexOf("sns-video-hw") > 0)) { videoUrl = urls[ui]; break; } } if (videoUrl) break; } }
                 }
                 if (!images.length && note.image_list && note.image_list.length) {
-                  note.image_list.forEach(function(img) { var iu = img.url_default || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
+                  note.image_list.forEach(function(img) { images.push(img.url_default || img.url || ''); });
                 }
               }
             }
@@ -1048,14 +1026,6 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
   }
   if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
 
-  // De-watermark all Xiaohongshu images
-  for (var di = 0; di < images.length; di++) {
-    var iu = images[di];
-    if (iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0) {
-      images[di] = iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^\/]+\/[^\/]+\/(notes_pre_post\/[^!?]+).*$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1');
-    }
-  }
-
   return ok('xiaohongshu', {
     type: images.length ? 'image' : 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
@@ -1082,6 +1052,8 @@ async function parseTiktok(originalUrl) {
   var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
   var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
   var title = descMatch ? descMatch[1] : '';
+
+  // 获取 Cookie
   var ttkCookies = '';
   try {
     var ckResp = await fetch(realUrl, { method: 'HEAD', headers: { 'User-Agent': UA, 'Accept': 'text/html' }, redirect: 'manual' });
@@ -1091,73 +1063,104 @@ async function parseTiktok(originalUrl) {
     }
   } catch(e) {}
 
-  // 多种画质提取
-  var videoUrl = '';
-  // 1. downloadAddr（画质最高）
+  // ====== 画质提取链：从多个来源获取并选择最优 ======
+  var candidates = [];  // {url, source, quality}
+
+  // --- 1. HTML: downloadAddr ---
   var dlMatch = html.match(/"downloadAddr":\{"url_list":\["([^"]+)"/) || html.match(/"downloadAddr":"([^"]+)"/);
-  if (dlMatch) videoUrl = dlMatch[1].replace(/\\u002F/g, '/');
-  // 2. bitrateInfo 最高码率
-  if (!videoUrl) {
-    var brMatch = html.match(/bitrateInfo\s*:\s*\[([^\]]+)\]/);
-    if (brMatch) {
-      var brItems = (',' + brMatch[1]).match(/\{[^}]+\}/g);
-      if (brItems && brItems.length) {
-        var bestBr = '', bestBit = 0;
-        brItems.forEach(function(item) {
-          var br = item.match(/"bitrate":(\d+)/);
-          var urlM = item.match(/"playAddr":\{"url_list":\["([^"]+)"/);
-          if (br && urlM && parseInt(br[1]) > bestBit) {
-            bestBit = parseInt(br[1]);
-            bestBr = urlM[1].replace(/\\u002F/g, '/');
-          }
-        });
-        if (bestBr) videoUrl = bestBr;
-      }
+  if (dlMatch) {
+    var u = dlMatch[1].replace(/\\u002F/g, '/');
+    candidates.push({url: u, source: 'html_downloadAddr', quality: 10});
+  }
+
+  // --- 2. HTML: bitrateInfo 最高码率 ---
+  var brMatch = html.match(/bitrateInfo\s*:\s*\[([^\]]+)\]/);
+  if (brMatch) {
+    var brItems = (',' + brMatch[1]).match(/\{[^}]+\}/g);
+    if (brItems && brItems.length) {
+      var bestUrl = '', bestBit = 0;
+      brItems.forEach(function(item) {
+        var br = item.match(/"bitrate":(\d+)/);
+        var urlM = item.match(/"playAddr":\{"url_list":\["([^"]+)"/);
+        if (br && urlM && parseInt(br[1]) > bestBit) {
+          bestBit = parseInt(br[1]);
+          bestUrl = urlM[1].replace(/\\u002F/g, '/');
+        }
+      });
+      if (bestUrl) candidates.push({url: bestUrl, source: 'bitrateInfo', quality: 9});
     }
   }
-  // 3. playAddr
-  if (!videoUrl) {
-    var paMatch = html.match(/"playAddr":"([^"]+)"/);
-    if (paMatch) videoUrl = paMatch[1].replace(/\\u002F/g, '/');
-  }
-  // 4. url_list
-  if (!videoUrl) {
-    var ulMatch = html.match(/"url_list":\["([^"]+)"\]/);
-    if (ulMatch) videoUrl = ulMatch[1].replace(/\\u002F/g, '/');
+
+  // --- 3. HTML: playAddr ---
+  var paMatch = html.match(/"playAddr":"([^"]+)"/);
+  if (paMatch) {
+    candidates.push({url: paMatch[1].replace(/\\u002F/g, '/'), source: 'playAddr', quality: 7});
   }
 
-  if (!videoUrl) return fail('未提取到TikTok视频地址');
+  // --- 4. HTML: url_list ---
+  var ulMatch = html.match(/"url_list":\["([^"]+)"\]/);
+  if (ulMatch) {
+    candidates.push({url: ulMatch[1].replace(/\\u002F/g, '/'), source: 'url_list', quality: 5});
+  }
 
-  // TikTok API 兜底（获取 downloadAddr 高清画质）
-  if (!videoUrl || videoUrl.indexOf('downloadAddr') < 0) {
-    var vidMatch = realUrl.match(/video\/(\d+)/);
-    if (vidMatch) {
-      var vid = vidMatch[1];
-      // 2. TikTok 移动端 API（可获取 _original.mp4 原画质）
-      try {
-        var mobileApi = await fetch('https://api22-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=' + vid + '&version_code=34.0.0&language=en&app_name=musically', {
-          headers: { 'User-Agent': 'com.zhiliaoapp.musically/2024605030 (Linux; U; Android 12; en; Pixel 6; Build/SQ3A.220705.003.A1; Cronet/TTVERSION)', 'Accept': 'application/json', 'Referer': 'https://www.tiktok.com/', 'Cookie': ttkCookies },
-        });
-        if (mobileApi.ok) {
-          var mobileJson = await mobileApi.json();
-          if (mobileJson && mobileJson.aweme_list && mobileJson.aweme_list.length) {
-            var aweme = mobileJson.aweme_list[0];
-            if (aweme.video && aweme.video.download_addr && aweme.video.download_addr.url_list && aweme.video.download_addr.url_list.length) {
+  // --- 5. TikTok Web API（/api/item/detail/ 可获取 downloadAddr）---
+  var vidMatch = realUrl.match(/video\/(\d+)/);
+  if (vidMatch) {
+    var vid = vidMatch[1];
+    // 5a. TikTok 官方 Web API
+    try {
+      var webApiResp = await fetch('https://www.tiktok.com/api/item/detail/?item_id=' + vid + '&aid=1988', {
+        headers: { 'User-Agent': UA, 'Accept': 'application/json', 'Referer': 'https://www.tiktok.com/', 'Cookie': ttkCookies },
+      });
+      if (webApiResp.ok) {
+        var webJson = await webApiResp.json();
+        var item = webJson.itemInfo && webJson.itemInfo.itemStruct;
+        if (item && item.video) {
+          // downloadAddr（原画质）
+          if (item.video.download_addr && item.video.download_addr.url_list && item.video.download_addr.url_list.length) {
+            var dwUrl = item.video.download_addr.url_list[0].replace(/\\\\u002F/g, '/');
+            candidates.push({url: dwUrl, source: 'webapi_downloadAddr', quality: 10});
+          }
+          // playAddr 中的最高画质（通常有多个清晰度）
+          if (item.video.play_addr && item.video.play_addr.url_list && item.video.play_addr.url_list.length) {
+            var bestPa = '';
+            item.video.play_addr.url_list.forEach(function(uu) {
+              var cleaned = uu.replace(/\\\\u002F/g, '/');
+              if (!bestPa || (bestPa.indexOf('_original') < 0 && cleaned.indexOf('_original') >= 0)) bestPa = cleaned;
+            });
+            if (bestPa) candidates.push({url: bestPa, source: 'webapi_playAddr', quality: 8});
+          }
+        }
+      }
+    } catch(e) {}
+
+    // 5b. TikTok 移动端 API（可获取 _original.mp4 真正原画质）
+    try {
+      var mobileApi = await fetch('https://api22-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=' + vid + '&version_code=34.0.0&language=en&app_name=musically', {
+        headers: { 'User-Agent': 'com.zhiliaoapp.musically/2024605030 (Linux; U; Android 12; en; Pixel 6; Build/SQ3A.220705.003.A1; Cronet/TTVERSION)', 'Accept': 'application/json', 'Referer': 'https://www.tiktok.com/', 'Cookie': ttkCookies },
+      });
+      if (mobileApi.ok) {
+        var mobileJson = await mobileApi.json();
+        if (mobileJson && mobileJson.aweme_list && mobileJson.aweme_list.length) {
+          var aweme = mobileJson.aweme_list[0];
+          if (aweme.video) {
+            // download_addr 原画质
+            if (aweme.video.download_addr && aweme.video.download_addr.url_list && aweme.video.download_addr.url_list.length) {
               var origUrl = aweme.video.download_addr.url_list[0].replace(/\\\\u002F/g, '/');
-              if (origUrl && origUrl.indexOf('_original.mp4') >= 0) { videoUrl = origUrl; }
+              candidates.push({url: origUrl, source: 'mobile_downloadAddr', quality: 11});
             }
-            if ((!videoUrl || videoUrl.indexOf('_original.mp4') < 0) && aweme.video && aweme.video.play_addr && aweme.video.play_addr.url_list && aweme.video.play_addr.url_list.length) {
-              var paUrl = aweme.video.play_addr.url_list[0].replace(/\\\\u002F/g, '/');
-              if (paUrl && paUrl.indexOf('_original.mp4') >= 0) { videoUrl = paUrl; }
+            // play_addr 高清
+            if (aweme.video.play_addr && aweme.video.play_addr.url_list && aweme.video.play_addr.url_list.length) {
+              var mobPa = aweme.video.play_addr.url_list[0].replace(/\\\\u002F/g, '/');
+              candidates.push({url: mobPa, source: 'mobile_playAddr', quality: 9});
             }
           }
         }
-      } catch(e) {}
-    }
+      }
+    } catch(e) {}
   }
 
-
-  // 5. TikWM API
+  // --- 6. TikWM API（hdplay 通常比 playAddr 画质高）---
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -1166,13 +1169,9 @@ async function parseTiktok(originalUrl) {
       var tikJson = await tikRes.json();
       if (tikJson.code === 0 && tikJson.data) {
         var td = tikJson.data;
-      // 优先：downloadAddr > hdplay > playAddr
-        // 如果 downloadAddr 没找到，用 TikWM 的 hdplay（比 playAddr 画质高）
-        if (td.hdplay && (!videoUrl || videoUrl.indexOf('downloadAddr') < 0)) videoUrl = td.hdplay;
-        if (!videoUrl && td.play) videoUrl = td.play;
-        if (!videoUrl && td.url) videoUrl = td.url;
-        // 现有 URL 带 watermark 时用 hdplay 替换
-        if (videoUrl && videoUrl.indexOf('watermark') >= 0 && td.hdplay) videoUrl = td.hdplay;
+        if (td.hdplay) candidates.push({url: td.hdplay, source: 'tikwm_hdplay', quality: 9});
+        if (td.play) candidates.push({url: td.play, source: 'tikwm_play', quality: 7});
+        if (td.url && !td.play) candidates.push({url: td.url, source: 'tikwm_url', quality: 6});
         if (!authorName) authorName = (td.author && td.author.nickname) || '';
         if (!authorId) authorId = (td.author && td.author.unique_id) || '';
         if (!authorAvatar) authorAvatar = (td.author && td.author.avatar) || '';
@@ -1182,21 +1181,38 @@ async function parseTiktok(originalUrl) {
     }
   } catch(e) {}
 
-  // 6. 去水印提升画质
-  if (videoUrl.indexOf('watermark') >= 0) {
-    var noWmUrl = videoUrl.replace(/watermark[^\/]*\//, '').replace(/[?&]watermark=[^&]+/, '');
-    if (noWmUrl && noWmUrl !== videoUrl) videoUrl = noWmUrl;
+  // ====== 从候选中选出最佳 ======
+  var videoUrl = '';
+  // 按 quality 从高到低排序
+  candidates.sort(function(a, b) { return b.quality - a.quality; });
+
+  for (var ci = 0; ci < candidates.length; ci++) {
+    var cand = candidates[ci];
+    // 去水印提升画质
+    var url = cand.url;
+    if (url.indexOf('watermark') >= 0) {
+      var noWm = url.replace(/watermark[^\/]*\//, '').replace(/[?&]watermark=[^&]+/, '');
+      if (noWm && noWm !== url) url = noWm;
+    }
+    // 优先选 _original.mp4（真正原画质）
+    if (!videoUrl || (url.indexOf('_original.mp4') >= 0 && videoUrl.indexOf('_original.mp4') < 0)) {
+      videoUrl = url;
+    }
+  }
+
+  if (!videoUrl) {
+    // 最后兜底：从已有 URL 中选第一个
+    if (candidates.length > 0) videoUrl = candidates[0].url;
+    else return fail('未提取到TikTok视频地址');
   }
 
   return ok('tiktok', {
     type: 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
     cover: cover || '', url: videoUrl || '', images: [],
-  });
-}
+  });}
 
 
-// ===== 西瓜视频 =====
 async function parseXigua(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.ixigua.com/' });
