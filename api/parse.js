@@ -1120,6 +1120,33 @@ async function parseTiktok(originalUrl) {
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
+  // TikTok API 兜底（获取 downloadAddr 高清画质）
+  if (!videoUrl || videoUrl.indexOf('downloadAddr') < 0) {
+    var vidMatch = realUrl.match(/video\/(\d+)/);
+    if (vidMatch) {
+      try {
+        var apiResp = await fetch('https://www.tiktok.com/api/item/detail/?item_id=' + vidMatch[1], {
+          headers: { 'User-Agent': UA, 'Referer': 'https://www.tiktok.com/', 'Accept': 'application/json' },
+        });
+        if (apiResp.ok) {
+          var apiJson = await apiResp.json();
+          if (apiJson && apiJson.itemInfo && apiJson.itemInfo.itemStruct) {
+            var vidData = apiJson.itemInfo.itemStruct.video;
+            if (vidData && vidData.download_addr && vidData.download_addr.url_list && vidData.download_addr.url_list.length) {
+              var newUrl = vidData.download_addr.url_list[0].replace(/\\u002F/g, '/');
+              if (newUrl) { videoUrl = newUrl; }
+            }
+            if ((!videoUrl || videoUrl.indexOf('downloadAddr') < 0) && vidData && vidData.play_addr && vidData.play_addr.url_list && vidData.play_addr.url_list.length) {
+              var newUrl2 = vidData.play_addr.url_list[0].replace(/\\u002F/g, '/');
+              if (newUrl2 && (!videoUrl || newUrl2.indexOf('watermark') < 0)) { videoUrl = newUrl2; }
+            }
+          }
+        }
+      } catch(e) {}
+    }
+  }
+
+
   // 5. TikWM API
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
