@@ -1129,10 +1129,12 @@ async function parseTiktok(originalUrl) {
       var tikJson = await tikRes.json();
       if (tikJson.code === 0 && tikJson.data) {
         var td = tikJson.data;
-        // downloadAddr 优先（原画最高）
-        if (!videoUrl && td.hdplay) videoUrl = td.hdplay;
+      // 优先：downloadAddr > hdplay > playAddr
+        // 如果 downloadAddr 没找到，用 TikWM 的 hdplay（比 playAddr 画质高）
+        if (td.hdplay && (!videoUrl || videoUrl.indexOf('downloadAddr') < 0)) videoUrl = td.hdplay;
         if (!videoUrl && td.play) videoUrl = td.play;
         if (!videoUrl && td.url) videoUrl = td.url;
+        // 现有 URL 带 watermark 时用 hdplay 替换
         if (videoUrl && videoUrl.indexOf('watermark') >= 0 && td.hdplay) videoUrl = td.hdplay;
         if (!authorName) authorName = (td.author && td.author.nickname) || '';
         if (!authorId) authorId = (td.author && td.author.unique_id) || '';
