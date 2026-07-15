@@ -1124,21 +1124,22 @@ async function parseTiktok(originalUrl) {
   if (!videoUrl || videoUrl.indexOf('downloadAddr') < 0) {
     var vidMatch = realUrl.match(/video\/(\d+)/);
     if (vidMatch) {
+      // 2. TikTok 移动端 API（可获取 _original.mp4 原画质）
       try {
-        var apiResp = await fetch('https://www.tiktok.com/api/item/detail/?item_id=' + vidMatch[1], {
-          headers: { 'User-Agent': UA, 'Referer': 'https://www.tiktok.com/', 'Accept': 'application/json' },
+        var mobileApi = await fetch('https://api22-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=' + vid + '&version_code=34.0.0&language=en&app_name=musically', {
+          headers: { 'User-Agent': 'com.zhiliaoapp.musically/2024605030 (Linux; U; Android 12; en; Pixel 6; Build/SQ3A.220705.003.A1; Cronet/TTVERSION)', 'Accept': 'application/json', 'Referer': 'https://www.tiktok.com/' },
         });
-        if (apiResp.ok) {
-          var apiJson = await apiResp.json();
-          if (apiJson && apiJson.itemInfo && apiJson.itemInfo.itemStruct) {
-            var vidData = apiJson.itemInfo.itemStruct.video;
-            if (vidData && vidData.download_addr && vidData.download_addr.url_list && vidData.download_addr.url_list.length) {
-              var newUrl = vidData.download_addr.url_list[0].replace(/\\u002F/g, '/');
-              if (newUrl) { videoUrl = newUrl; }
+        if (mobileApi.ok) {
+          var mobileJson = await mobileApi.json();
+          if (mobileJson && mobileJson.aweme_list && mobileJson.aweme_list.length) {
+            var aweme = mobileJson.aweme_list[0];
+            if (aweme.video && aweme.video.download_addr && aweme.video.download_addr.url_list && aweme.video.download_addr.url_list.length) {
+              var origUrl = aweme.video.download_addr.url_list[0].replace(/\\\\u002F/g, '/');
+              if (origUrl && origUrl.indexOf('_original.mp4') >= 0) { videoUrl = origUrl; }
             }
-            if ((!videoUrl || videoUrl.indexOf('downloadAddr') < 0) && vidData && vidData.play_addr && vidData.play_addr.url_list && vidData.play_addr.url_list.length) {
-              var newUrl2 = vidData.play_addr.url_list[0].replace(/\\u002F/g, '/');
-              if (newUrl2 && (!videoUrl || newUrl2.indexOf('watermark') < 0)) { videoUrl = newUrl2; }
+            if ((!videoUrl || videoUrl.indexOf('_original.mp4') < 0) && aweme.video && aweme.video.play_addr && aweme.video.play_addr.url_list && aweme.video.play_addr.url_list.length) {
+              var paUrl = aweme.video.play_addr.url_list[0].replace(/\\\\u002F/g, '/');
+              if (paUrl && paUrl.indexOf('_original.mp4') >= 0) { videoUrl = paUrl; }
             }
           }
         }
