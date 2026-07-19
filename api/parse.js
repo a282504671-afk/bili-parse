@@ -30,7 +30,7 @@ function detectPlatform(url) {
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
   if (/xiaohongshu\.com|xhslink\.com|xhs\.cn/.test(url)) return 'xiaohongshu';
   if (/weibo\.com/.test(url) || /t\.cn/.test(url)) return 'weibo';
-  if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url)) return 'weixin';
+  if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url) || /finder\.video\.qq\.com/.test(url)) return 'weixin';
   return 'unknown';
 }
 
@@ -1264,17 +1264,78 @@ async function parseWeibo(originalUrl) {
   return fail('微博解析失败（BUGPK 代理）');
 }// ===== 微信视频号=====
 async function parseWeixin(originalUrl) {
+
+  // If finder.video.qq.com direct URL, return directly
+  if (/finder\.video\.qq\.com/.test(originalUrl)) {
+    return ok('weixin', {
+      _source: 'direct',
+      type: 'video',
+      title: '',
+      desc: '',
+      author: { name: '', id: '', avatar: '' },
+      cover: '',
+      url: originalUrl,
+      images: [],
+    });
+  }
   // 重试3次，每次使用不同的策略
   var lastErr = null;
   var attempts = [
     { ua: UA_WECHAT, label: 'WeChat UA' },
     { ua: UA, label: 'Chrome UA' },
   ];
-  
-  for (var t = 0; t < attempts.length; t++) {
+
+  // Strategy 0: Call WeChat API directly
+  try {
+    var apiHeaders = {
+      'User-Agent': UA,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Referer': 'https://channels.weixin.qq.com/',
+      'Origin': 'https://channels.weixin.qq.com',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Dest': 'empty',
+    };
+    var shortUri = originalUrl.match(/sph\/(\w+)/);
+    if (!shortUri) shortUri = originalUrl.match(/[\?&]id=(\w+)/);
+    if (shortUri) {
+      var apiBody = JSON.stringify({
+        baseReq: { generalToken: '' },
+        shortUri: shortUri[1]
+      });
+      var apiRes = await fetch('https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info', {
+        method: 'POST',
+        headers: apiHeaders,
+        body: apiBody
+      });
+      if (apiRes.ok) {
+        var apiJson = await apiRes.json();
+        if (apiJson.errCode === 0 && apiJson.data && apiJson.data.feedInfo) {
+          var fi = apiJson.data.feedInfo;
+          var ai = apiJson.data.authorInfo || {};
+          var videoUrl = fi.videoUrl || (fi.h265VideoInfo && fi.h265VideoInfo.videoUrl) || (fi.h264VideoInfo && fi.h264VideoInfo.videoUrl) || '';
+          return ok('weixin', {
+            _source: 'api',
+            type: 'video',
+            title: fi.description || '',
+            desc: fi.description || '',
+            author: { name: ai.nickname || '', id: '', avatar: ai.headImgUrl || '' },
+            cover: fi.coverUrl || '',
+            url: videoUrl,
+            images: [],
+          });
+        }
+      }
+    }
+  } catch(e) {}
+    for (var t = 0; t < attempts.length; t++) {
     try {
       var html = await fetchHtml(originalUrl, { 'User-Agent': attempts[t].ua });
-      var title = '', cover = '', videoUrl = '', desc = '';
+      var title = '', cover = '', desc = '';
+      videoUrl = '';
       var author = '', authorAvatar = '';
 
       // 策略1: 查找 __INITIAL_STATE__
