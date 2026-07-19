@@ -1285,57 +1285,10 @@ async function parseWeixin(originalUrl) {
     { ua: UA, label: 'Chrome UA' },
   ];
 
-  // Strategy 0: Call WeChat API directly
-  try {
-    var apiHeaders = {
-      'User-Agent': UA,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-      'Referer': 'https://channels.weixin.qq.com/',
-      'Origin': 'https://channels.weixin.qq.com',
-      'X-Requested-With': 'XMLHttpRequest',
-      'Sec-Fetch-Site': 'same-origin',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Dest': 'empty',
-    };
-    var shortUri = originalUrl.match(/sph\/(\w+)/);
-    if (!shortUri) shortUri = originalUrl.match(/[\?&]id=(\w+)/);
-    if (shortUri) {
-      var apiBody = JSON.stringify({
-        baseReq: { generalToken: '' },
-        shortUri: shortUri[1]
-      });
-      var apiRes = await fetch('https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info', {
-        method: 'POST',
-        headers: apiHeaders,
-        body: apiBody
-      });
-      if (apiRes.ok) {
-        var apiJson = await apiRes.json();
-        if (apiJson.errCode === 0 && apiJson.data && apiJson.data.feedInfo) {
-          var fi = apiJson.data.feedInfo;
-          var ai = apiJson.data.authorInfo || {};
-          var videoUrl = fi.videoUrl || (fi.h265VideoInfo && fi.h265VideoInfo.videoUrl) || (fi.h264VideoInfo && fi.h264VideoInfo.videoUrl) || '';
-          return ok('weixin', {
-            _source: 'api',
-            type: 'video',
-            title: fi.description || '',
-            desc: fi.description || '',
-            author: { name: ai.nickname || '', id: '', avatar: ai.headImgUrl || '' },
-            cover: fi.coverUrl || '',
-            url: videoUrl,
-            images: [],
-          });
-        }
-      }
-    }
-  } catch(e) {}
-    for (var t = 0; t < attempts.length; t++) {
+  for (var t = 0; t < attempts.length; t++) {
     try {
       var html = await fetchHtml(originalUrl, { 'User-Agent': attempts[t].ua });
-      var title = '', cover = '', desc = '';
-      videoUrl = '';
+      var title = '', cover = '', videoUrl = '', desc = '';
       var author = '', authorAvatar = '';
 
       // 策略1: 查找 __INITIAL_STATE__
@@ -1410,7 +1363,28 @@ async function parseWeixin(originalUrl) {
     } catch(e) { lastErr = e; }
   }
 
-  // 尝试 52api 解析
+  
+  // 尝试 ALAPI 解析
+  try {
+    var alapiRes = await fetch('https://v3.alapi.cn/api/video/url?token=2hgqmh0sy3mcknephdn5yl9u2qubul&url=' + encodeURIComponent(originalUrl), {
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (alapiRes.ok) {
+      var alapiJson = await alapiRes.json();
+      if (alapiJson.success && alapiJson.data && alapiJson.data.video_url) {
+        var d = alapiJson.data;
+        return ok('weixin', {
+          _source: 'alapi',
+          type: 'video', title: d.title || '', desc: d.title || '',
+          author: { name: d.author || '', id: '', avatar: '' },
+          cover: d.cover_url || '', url: d.video_url || '', images: [],
+        });
+      }
+    }
+  } catch(e) {}
+
+// 尝试 52api 解析
   try {
     var apiRes = await fetch('https://www.52api.cn/api/sph?key=SgAYGMs3AxwD47faiPUKUzM06D&url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
