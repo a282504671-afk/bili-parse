@@ -1364,6 +1364,39 @@ async function parseWeixin(originalUrl) {
   }
 
   
+  // 先调微信API获取元数据（作者/标题/封面，免费）
+  var wxTitle = '', wxAuthor = '', wxAvatar = '', wxCover = '';
+  try {
+    var wxHeaders = {
+      'User-Agent': UA,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Referer': 'https://channels.weixin.qq.com/',
+      'Origin': 'https://channels.weixin.qq.com',
+      'X-Requested-With': 'XMLHttpRequest',
+    };
+    var shortUri = originalUrl.match(/sph\/(\w+)/);
+    if (!shortUri) shortUri = originalUrl.match(/[\?&]id=(\w+)/);
+    if (shortUri) {
+      var wxRes = await fetch('https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info', {
+        method: 'POST', headers: wxHeaders,
+        body: JSON.stringify({ baseReq: { generalToken: '' }, shortUri: shortUri[1] })
+      });
+      if (wxRes.ok) {
+        var wxJson = await wxRes.json();
+        if (wxJson.errCode === 0 && wxJson.data && wxJson.data.feedInfo) {
+          wxTitle = wxJson.data.feedInfo.description || '';
+          wxCover = wxJson.data.feedInfo.coverUrl || '';
+          if (wxJson.data.authorInfo) {
+            wxAuthor = wxJson.data.authorInfo.nickname || '';
+            wxAvatar = wxJson.data.authorInfo.headImgUrl || '';
+          }
+        }
+      }
+    }
+  } catch(e) {}
+
   // 尝试 ALAPI 解析
   try {
     var alapiRes = await fetch('https://v3.alapi.cn/api/video/url?token=2hgqmh0sy3mcknephdn5yl9u2qubul&url=' + encodeURIComponent(originalUrl), {
@@ -1376,9 +1409,11 @@ async function parseWeixin(originalUrl) {
         var d = alapiJson.data;
         return ok('weixin', {
           _source: 'alapi',
-          type: 'video', title: d.title || '', desc: d.title || '',
-          author: { name: d.author || '', id: '', avatar: '' },
-          cover: d.cover_url || '', url: d.video_url || '', images: [],
+          type: 'video',
+          title: wxTitle || d.title || '',
+          desc: wxTitle || d.title || '',
+          author: { name: wxAuthor || d.author || '', id: '', avatar: wxAvatar || '' },
+          cover: wxCover || d.cover_url || '', url: d.video_url || '', images: [],
         });
       }
     }
