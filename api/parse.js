@@ -1654,19 +1654,3 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
