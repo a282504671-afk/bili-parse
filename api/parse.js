@@ -92,6 +92,8 @@ function extractDouyinItemId(url) {
   if (m) return m[1];
   m = url.match(/\/note\/(\d{6,})/);
   if (m) return m[1];
+  m = url.match(/\/slides\/(\d{6,})/);
+  if (m) return m[1];
   m = url.match(/aweme_id=(\d+)/);
   if (m) return m[1];
   return null;
@@ -316,7 +318,7 @@ async function parseDouyin(originalUrl) {
     } catch(e) {}
   }
 return ok('douyin', {
-    type: noteIsVideoType ? 'video' : (videoUrl && images.length <= 1 ? 'video' : (images.length ? 'image' : 'video')),
+    type: images.length ? 'image' : 'video',
     title: title,
     desc: title || '',
     author: { name: authorName, id: authorId, avatar: avatar },
