@@ -1379,21 +1379,16 @@ async function parseWeixin(originalUrl) {
       var json = await res.json();
       if (json.code === 200 && json.data && json.data.url) {
         var d = json.data;
-        // 从video_backup中择优：xWT158(H.265高清) > xWT110(1080p) > xWT111 > xWT113
-        var bestUrl = d.url || '';
-        if (d.video_backup && d.video_backup.length > 0) {
-          var allUrls = [bestUrl];
-          for (var vi = 0; vi < d.video_backup.length; vi++) {
-            if (d.video_backup[vi].url) allUrls.push(d.video_backup[vi].url);
-          }
-          var preferred = allUrls.filter(function(u) { return u.indexOf('xWT158') >= 0 || u.indexOf('xWT110') >= 0 || u.indexOf('xWT111') >= 0; });
-          if (preferred.length > 0) bestUrl = preferred[0];
+        var videoUrl = d.url || '';
+        // 清除画质限制参数（X-snsvideoflag/flag/basedata/sign），让CDN返回原始最高画质
+        if (videoUrl) {
+          videoUrl = videoUrl.replace(/&(?:X-snsvideoflag|flag|basedata|sign)=[^&]*/g, '');
         }
         return ok('weixin', {
           _source: 'bugpk',
           type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
           author: { name: (d.author && d.author.name) || d.nickname || d.author_name || '', id: (d.author && d.author.id) || d.author_id || d.uid || d.user_id || '', avatar: (d.author && d.author.avatar) || d.avatar || d.author_avatar || d.face || '' },
-          cover: d.cover || '', url: bestUrl, images: [],
+          cover: d.cover || '', url: videoUrl, images: [],
         });
       }
     }
@@ -1596,3 +1591,4 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: 'error: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+
