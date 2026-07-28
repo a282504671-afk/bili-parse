@@ -28,9 +28,9 @@ function detectPlatform(url) {
   if (/acfun\.cn/.test(url)) return 'acfun';
   if (/ixigua\.com/.test(url)) return 'ixigua';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
-  if (/xiaohongshu\.com|xhslink\.com|xhs\.cn/.test(url)) return 'xiaohongshu';
+  if (/xiaohongshu\.com|xhslink\.com|xhslink\.cn|xhs\.cn/.test(url)) return 'xiaohongshu';
   if (/weibo\.com/.test(url) || /t\.cn/.test(url)) return 'weibo';
-  if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url) || /finder\.video\.qq\.com/.test(url)) return 'weixin';
+  if (/weixin\.qq\.com\/sph/.test(url) || /channels\.weixin\.qq\.com/.test(url)) return 'weixin';
   return 'unknown';
 }
 
@@ -1266,27 +1266,13 @@ async function parseWeibo(originalUrl) {
   return fail('微博解析失败（BUGPK 代理）');
 }// ===== 微信视频号=====
 async function parseWeixin(originalUrl) {
-
-  // If finder.video.qq.com direct URL, return directly
-  if (/finder\.video\.qq\.com/.test(originalUrl)) {
-    return ok('weixin', {
-      _source: 'direct',
-      type: 'video',
-      title: '',
-      desc: '',
-      author: { name: '', id: '', avatar: '' },
-      cover: '',
-      url: originalUrl,
-      images: [],
-    });
-  }
   // 重试3次，每次使用不同的策略
   var lastErr = null;
   var attempts = [
     { ua: UA_WECHAT, label: 'WeChat UA' },
     { ua: UA, label: 'Chrome UA' },
   ];
-
+  
   for (var t = 0; t < attempts.length; t++) {
     try {
       var html = await fetchHtml(originalUrl, { 'User-Agent': attempts[t].ua });
@@ -1365,63 +1351,7 @@ async function parseWeixin(originalUrl) {
     } catch(e) { lastErr = e; }
   }
 
-  
-  // 先调微信API获取元数据（作者/标题/封面，免费）
-  var wxTitle = '', wxAuthor = '', wxAvatar = '', wxCover = '';
-  try {
-    var wxHeaders = {
-      'User-Agent': UA,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-      'Referer': 'https://channels.weixin.qq.com/',
-      'Origin': 'https://channels.weixin.qq.com',
-      'X-Requested-With': 'XMLHttpRequest',
-    };
-    var shortUri = originalUrl.match(/sph\/(\w+)/);
-    if (!shortUri) shortUri = originalUrl.match(/[\?&]id=(\w+)/);
-    if (shortUri) {
-      var wxRes = await fetch('https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info', {
-        method: 'POST', headers: wxHeaders,
-        body: JSON.stringify({ baseReq: { generalToken: '' }, shortUri: shortUri[1] })
-      });
-      if (wxRes.ok) {
-        var wxJson = await wxRes.json();
-        if (wxJson.errCode === 0 && wxJson.data && wxJson.data.feedInfo) {
-          wxTitle = wxJson.data.feedInfo.description || '';
-          wxCover = wxJson.data.feedInfo.coverUrl || '';
-          if (wxJson.data.authorInfo) {
-            wxAuthor = wxJson.data.authorInfo.nickname || '';
-            wxAvatar = wxJson.data.authorInfo.headImgUrl || '';
-          }
-        }
-      }
-    }
-  } catch(e) {}
-
-  // 尝试 ALAPI 解析
-  try {
-    var alapiRes = await fetch('https://v3.alapi.cn/api/video/url?token=2hgqmh0sy3mcknephdn5yl9u2qubul&url=' + encodeURIComponent(originalUrl), {
-      headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(15000)
-    });
-    if (alapiRes.ok) {
-      var alapiJson = await alapiRes.json();
-      if (alapiJson.success && alapiJson.data && alapiJson.data.video_url) {
-        var d = alapiJson.data;
-        return ok('weixin', {
-          _source: 'alapi',
-          type: 'video',
-          title: wxTitle || d.title || '',
-          desc: wxTitle || d.title || '',
-          author: { name: wxAuthor || d.author || '', id: '', avatar: wxAvatar || '' },
-          cover: wxCover || d.cover_url || '', url: d.video_url || '', images: [],
-        });
-      }
-    }
-  } catch(e) {}
-
-// 尝试 52api 解析
+  // 尝试 52api 解析
   try {
     var apiRes = await fetch('https://www.52api.cn/api/sph?key=SgAYGMs3AxwD47faiPUKUzM06D&url=' + encodeURIComponent(originalUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -1449,11 +1379,21 @@ async function parseWeixin(originalUrl) {
       var json = await res.json();
       if (json.code === 200 && json.data && json.data.url) {
         var d = json.data;
+        // 从video_backup中择优：xWT158(H.265高清) > xWT110(1080p) > xWT111 > xWT113
+        var bestUrl = d.url || '';
+        if (d.video_backup && d.video_backup.length > 0) {
+          var allUrls = [bestUrl];
+          for (var vi = 0; vi < d.video_backup.length; vi++) {
+            if (d.video_backup[vi].url) allUrls.push(d.video_backup[vi].url);
+          }
+          var preferred = allUrls.filter(function(u) { return u.indexOf('xWT158') >= 0 || u.indexOf('xWT110') >= 0 || u.indexOf('xWT111') >= 0; });
+          if (preferred.length > 0) bestUrl = preferred[0];
+        }
         return ok('weixin', {
           _source: 'bugpk',
           type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
           author: { name: (d.author && d.author.name) || d.nickname || d.author_name || '', id: (d.author && d.author.id) || d.author_id || d.uid || d.user_id || '', avatar: (d.author && d.author.avatar) || d.avatar || d.author_avatar || d.face || '' },
-          cover: d.cover || '', url: d.url || '', images: [],
+          cover: d.cover || '', url: bestUrl, images: [],
         });
       }
     }
