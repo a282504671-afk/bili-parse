@@ -2866,7 +2866,8 @@ const platform = detectPlatform(targetUrl);
 
 
 
-// 入口2：Vercel / 腾讯云SCF(Node) 环境兼容入口
+// 入口2：Vercel / 腾讯云SCF(Node) 环境兼容入口（Cloudflare 无 module 时自动跳过）
+if (typeof module !== 'undefined' && module.exports) {
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
@@ -2906,3 +2907,4 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ code: 500, msg: '解析失败: ' + (e && e.message ? e.message : String(e)) }));
   }
 };
+}
