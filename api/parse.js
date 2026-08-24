@@ -2289,31 +2289,120 @@ function pickBestVideoUrl(candidates) {
   return best309 || best258 || '';
 }
 
+// ===== TikTok =====
+function extractTiktokItemStruct(html) {
+  try {
+    var marker = '__UNIVERSAL_DATA_FOR_REHYDRATION__';
+    var idx = html.indexOf(marker);
+    if (idx < 0) return null;
+    var scriptEnd = html.indexOf('</script>', idx);
+    var jsonStart = html.indexOf('>', idx);
+    if (scriptEnd < 0 || jsonStart < 0 || jsonStart > scriptEnd) return null;
+    var raw = html.substring(jsonStart + 1, scriptEnd).trim();
+    if (!raw) return null;
+    var uni = JSON.parse(raw);
+    var scope = (uni && uni.__DEFAULT_SCOPE__) || uni || {};
+    var detail = scope['webapp.reflow.video.detail'] || scope['webapp.reflow.photo.detail'] || {};
+    return (detail.itemInfo && detail.itemInfo.itemStruct) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function tiktokUrlFromField(field) {
+  if (typeof field === 'string') return field;
+  if (!field) return '';
+  if (Array.isArray(field.urlList) && field.urlList.length) return field.urlList[0];
+  if (field.imageURL) {
+    if (typeof field.imageURL === 'string') return field.imageURL;
+    if (Array.isArray(field.imageURL.urlList) && field.imageURL.urlList.length) return field.imageURL.urlList[0];
+  }
+  return '';
+}
+
+function tiktokUnescapeUrl(s) {
+  if (!s) return s;
+  return s.split('\\u002F').join('/').split('\\/').join('/');
+}
+
 async function parseTiktok(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
   var html = await fetchHtml(realUrl, { Referer: 'https://www.tiktok.com/' });
 
-  // 
+  var title = '', cover = '', videoUrl = '', authorName = '', authorId = '', authorAvatar = '';
+  var images = [];
+
+  // ① 优先：移动端页面 __UNIVERSAL_DATA_FOR_REHYDRATION__ 内完整 itemStruct（含图集 images / 作者 / 标题 / 视频直链）
+  var item = extractTiktokItemStruct(html);
+  if (item) {
+    var a = item.author || {};
+    authorName = a.nickname || '';
+    authorId = a.uniqueId || a.id || '';
+    authorAvatar = a.avatarLarger || a.avatarMedium || a.avatarThumb || '';
+    if (item.desc) title = item.desc;
+    var ip = item.imagePost;
+    if (ip && Array.isArray(ip.images) && ip.images.length) {
+      for (var i = 0; i < ip.images.length; i++) {
+        var im = ip.images[i];
+        if (!im) continue;
+        var u = tiktokUrlFromField(im.imageURL);
+        if (u) images.push(u);
+      }
+      if (!cover) cover = tiktokUrlFromField(ip.cover);
+      if (!title && ip.title) title = ip.title;
+    }
+    var v = item.video || {};
+    if (!videoUrl) videoUrl = tiktokUrlFromField(v.playAddr) || tiktokUrlFromField(v.downloadAddr);
+    if (!cover) cover = tiktokUrlFromField(v.cover) || tiktokUrlFromField(v.originCover);
+    if (!videoUrl) videoUrl = tiktokUrlFromField(item.playAddr);
+    if (!cover) cover = tiktokUrlFromField(item.cover);
+  }
+
+  // ② 正则兜底（仅补齐①未取到的字段，避免覆盖已解析数据）
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
-
   var paMatch = html.match(/"playAddr":"([^"]+)"/);
   var coverMatch = html.match(/"cover":"([^"]+)"/);
   var descMatch = html.match(/"desc":"([^"]+)"/);
 
-  // 
-  var authorName = allNick && allNick.length > 0 ? allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1] : '';
-  var authorId = allUid && allUid.length > 0 ? allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1] : '';
-  var authorAvatar = allAvatar && allAvatar.length > 0 ? allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1].replace(/\\u002F/g, '/') : '';
+  if (!authorName && allNick && allNick.length) authorName = allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1];
+  if (!authorId && allUid && allUid.length) authorId = allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1];
+  if (!authorAvatar && allAvatar && allAvatar.length) authorAvatar = tiktokUnescapeUrl(allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1]);
+  if (!videoUrl && paMatch) videoUrl = tiktokUnescapeUrl(paMatch[1]);
+  if (!cover && coverMatch) cover = tiktokUnescapeUrl(coverMatch[1]);
+  if (!title && descMatch) title = descMatch[1];
 
-  var videoUrl = paMatch ? paMatch[1].replace(/\\u002F/g, '/') : '';
-  var cover = coverMatch ? coverMatch[1].replace(/\\u002F/g, '/') : '';
-  var title = descMatch ? descMatch[1] : '';
+  // 图集图片兜底：从页面 urlList 中收集 photomode 原图直链（按图片ID去重）
+  if (!images.length) {
+    var urlListRe = /"urlList":\["([^"]+)"/g;
+    var um;
+    var seenImg = {};
+    while ((um = urlListRe.exec(html)) !== null) {
+      var u2 = tiktokUnescapeUrl(um[1]);
+      if (u2.indexOf('photomode') >= 0) {
+        var keyMatch = u2.match(/photomode-sg\/([^~?]+)/);
+        var key = keyMatch ? keyMatch[1] : u2;
+        if (!seenImg[key]) {
+          seenImg[key] = true;
+          images.push(u2);
+        }
+      }
+    }
+  }
+
+  // ③ 图集：返回 type=image + images
+  if (images.length) {
+    return ok('tiktok', {
+      type: 'image', title: title || '', desc: title || '',
+      author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
+      cover: cover || images[0] || '', url: '', images: images,
+    });
+  }
 
   if (!videoUrl) return fail('未提取到TikTok视频地址');
 
-  // 
+  // ④ TikWM 补高清（保留原逻辑）
   try {
     var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
       headers: { 'User-Agent': UA, 'Accept': 'application/json' },
