@@ -464,11 +464,11 @@ function _extractImageList(images) {
 }
 
 // ===== build douyin ok() from BugPK data (author id: unique_id/short_id first) =====
-function _buildDouyinOk(data, url, isImageType) {
+function _buildDouyinOk(data, url, isImageType, videoList) {
   var ext = data.extra || {};
   var ae = ext.author_extra || {};
   var authorId = String(ae.unique_id || ae.short_id || (data.author && data.author.id) || '');
-  return ok('douyin', {
+  var result = {
     type: isImageType ? 'image' : 'video',
     title: data.title || data.desc || '',
     desc: data.desc || data.title || '',
@@ -476,7 +476,9 @@ function _buildDouyinOk(data, url, isImageType) {
     cover: data.cover || '',
     url: isImageType ? '' : url,
     images: _extractImageList(data.images),
-  });
+  };
+  if (videoList && videoList.length) result.videoList = videoList;
+  return ok('douyin', result);
 }
 
 // ===== BugPK: accept zjcdn direct link only; null on any failure =====
@@ -501,6 +503,22 @@ async function _bugpkGetZjcdn(originalUrl) {
         if (bbUrl.indexOf('.zjcdn.com') > 0 && bbUrl.indexOf('aweme.snssdk.com') < 0) {
           return { ok: true, result: _buildDouyinOk(bpData, bbUrl, false) };
         }
+      }
+    }
+    // ===== 动图/实况照片(live_photo)：每个元素带 image + video，视频为无水印直链 =====
+    if (bpData.live_photo && bpData.live_photo.length) {
+      var lpVideos = [];
+      var lpImages = [];
+      for (var lpi = 0; lpi < bpData.live_photo.length; lpi++) {
+        var lpItem = bpData.live_photo[lpi] || {};
+        var lpVid = lpItem.video || '';
+        var lpImg = lpItem.image || '';
+        if (lpVid && lpVid.indexOf('http') === 0 && lpVideos.indexOf(lpVid) < 0) lpVideos.push(lpVid);
+        if (lpImg && lpImg.indexOf('http') === 0 && lpImages.indexOf(lpImg) < 0) lpImages.push(lpImg);
+      }
+      if (lpVideos.length) {
+        if (lpImages.length) bpData.images = lpImages;
+        return { ok: true, result: _buildDouyinOk(bpData, lpVideos[0], false, lpVideos) };
       }
     }
     // ?? zjcdn ??????????BugPK ??????? images?
@@ -673,6 +691,7 @@ async function parseDouyin(originalUrl) {
   var authorId = '';
   var avatar = '';
   var images = [];
+  var videoList = [];
 
   // ===== 从HTML item_list提取数据 =====
   if (item) {
@@ -844,20 +863,9 @@ async function parseDouyin(originalUrl) {
       }
     } catch(e) { /* BugPK不可用，继续使用现有URL */ }
   }
-if (images.length) {
-    return ok('douyin', {
-      type: 'image',
-      title: title,
-      desc: title || '',
-      author: { name: authorName, id: authorId, avatar: avatar },
-      cover: cover,
-      url: '',
-      images: images,
-    });
-  }
 
-  // ===== BugPK \u7edd\u5e95\uff1aHTML/API \u5168\u5931\u8d25\u65f6\uff0c\u4ecd\u5c1d\u8bd5 BugPK \u89e3\u6790 zjcdn \u76f4\u94fe =====
-  if (!playUrl && !images.length) {
+  // ===== BugPK 兜底：HTML/API 全失败时，仍尝试 BugPK 解析 zjcdn 直链（含动图 live_photo） =====
+  if (!playUrl) {
     try {
       var bpResF = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
         headers: { 'User-Agent': UA, 'Accept': 'application/json' },
@@ -875,6 +883,23 @@ if (images.length) {
               if (bbUrlF.indexOf('.zjcdn.com') > 0 && bbUrlF.indexOf('aweme.snssdk.com') < 0) { playUrl = bbUrlF; break; }
             }
           }
+          // ===== 动图/实况照片(live_photo)兜底 =====
+          if (!playUrl && bpJsonF.data.live_photo && bpJsonF.data.live_photo.length) {
+            var lpVideosF = [];
+            var lpImagesF = [];
+            for (var lpiF = 0; lpiF < bpJsonF.data.live_photo.length; lpiF++) {
+              var lpItemF = bpJsonF.data.live_photo[lpiF] || {};
+              var lpVidF = lpItemF.video || '';
+              var lpImgF = lpItemF.image || '';
+              if (lpVidF && lpVidF.indexOf('http') === 0 && lpVideosF.indexOf(lpVidF) < 0) lpVideosF.push(lpVidF);
+              if (lpImgF && lpImgF.indexOf('http') === 0 && lpImagesF.indexOf(lpImgF) < 0) lpImagesF.push(lpImgF);
+            }
+            if (lpVideosF.length) {
+              playUrl = lpVideosF[0];
+              if (!videoList) videoList = lpVideosF;
+              if (lpImagesF.length) images = lpImagesF;
+            }
+          }
           var bpExtF = bpJsonF.data.extra || {};
           var bpAEF = bpExtF.author_extra || {};
           if (!title && (bpJsonF.data.title || bpJsonF.data.desc)) title = bpJsonF.data.title || bpJsonF.data.desc || '';
@@ -883,23 +908,12 @@ if (images.length) {
           if (!authorId) authorId = String(bpAEF.unique_id || bpAEF.short_id || (bpJsonF.data.author && bpJsonF.data.author.id) || '');
           if (!avatar && bpJsonF.data.author && bpJsonF.data.author.avatar) avatar = bpJsonF.data.author.avatar;
           if (!images.length) images = _extractImageList(bpJsonF.data.images);
-          if (images.length) {
-            return ok('douyin', {
-              type: 'image',
-              title: title,
-              desc: title || '',
-              author: { name: authorName, id: authorId, avatar: avatar },
-              cover: cover,
-              url: '',
-              images: images,
-            });
-          }
         }
       }
     } catch(e) {}
   }
-    // ===== \u6296\u97f3\u5b98\u65b9 detail \u63a5\u53e3 + a_bogus \u7b7e\u540d\u515c\u5e95\uff08\u56fe\u96c6/\u89c6\u9891\u90fd\u53ef\uff09 =====
-  if (!playUrl && !images.length) {
+    // ===== 抖音官方 detail 接口 + a_bogus 签名兜底（图集/视频都可） =====
+  if (!playUrl) {
     try {
       var webidF = '7' + String(Date.now()).slice(0, 18);
       var msF = 'xxx' + Math.random().toString(36).slice(2, 40);
@@ -952,17 +966,6 @@ if (images.length) {
           }
         }
         if (!images.length && dF.images) images = _extractImageList(dF.images);
-        if (images.length) {
-          return ok('douyin', {
-            type: 'image',
-            title: title,
-            desc: title || '',
-            author: { name: authorName, id: authorId, avatar: avatar },
-            cover: cover,
-            url: '',
-            images: images,
-          });
-        }
         if (dF.author) {
           var aF = dF.author;
           if (!authorName && aF.nickname) authorName = aF.nickname;
@@ -976,16 +979,33 @@ if (images.length) {
       }
     } catch(e) {}
   }
-if (!playUrl) return fail('\u672a\u63d0\u53d6\u5230\u6296\u97f3\u89c6\u9891\u5730\u5740');
-  return ok('douyin', {
-    type: 'video',
-    title: title,
-    desc: title || '',
-    author: { name: authorName, id: authorId, avatar: avatar },
-    cover: cover,
-    url: playUrl,
-    images: [],
-  });
+
+  // ===== 统一返回：有视频返回video（保留封面图），纯图集返回image，都没有则失败 =====
+  if (playUrl) {
+    var retVideo = {
+      type: 'video',
+      title: title,
+      desc: title || '',
+      author: { name: authorName, id: authorId, avatar: avatar },
+      cover: cover,
+      url: playUrl,
+      images: images,
+    };
+    if (videoList && videoList.length) retVideo.videoList = videoList;
+    return ok('douyin', retVideo);
+  }
+  if (images.length) {
+    return ok('douyin', {
+      type: 'image',
+      title: title,
+      desc: title || '',
+      author: { name: authorName, id: authorId, avatar: avatar },
+      cover: cover,
+      url: '',
+      images: images,
+    });
+  }
+  return fail('未提取到抖音视频地址');
 }
 
 
