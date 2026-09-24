@@ -437,6 +437,31 @@ globalThis.sign_datail = sign_datail;
 globalThis.sign = sign;
 })();
 const UA = 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+const BUGPK2_API = 'https://api-new.ifphp.com/api/svparse';
+const BUGPK2_KEY = 'bp_live_5c44b116706699e861c2f0c4a7dc386ccebd9ad568a6985b48896c360da3fef9';
+// BUGPK2.0 统一请求：老 api.bugpk.com 不稳定，全部改走新平台（需 X-API-Key）
+async function _bugpk2Fetch(targetUrl, timeoutMs) {
+  var bpUrl = BUGPK2_API + '?url=' + encodeURIComponent(targetUrl);
+  var bpHeaders = { 'User-Agent': UA, 'Accept': 'application/json', 'X-API-Key': BUGPK2_KEY };
+  var bpTimeout = timeoutMs || 15000;
+  // BUGPK2.0 接口偶发 502，自动重试最多3次（只重试新接口，不调用老接口）
+  for (var bpRetry = 0; bpRetry < 2; bpRetry++) {
+    try {
+      var bpRes = await fetch(bpUrl, { headers: bpHeaders, signal: AbortSignal.timeout(bpTimeout) });
+      if (bpRes.ok) return bpRes;
+      // 502/503/504 等服务端错误，等待后重试
+      if (bpRes.status === 502 || bpRes.status === 503 || bpRes.status === 504) {
+        await new Promise(function(r) { setTimeout(r, 1000); });
+        continue;
+      }
+      return bpRes; // 其他错误直接返回
+    } catch (e) {
+      if (bpRetry < 2) { await new Promise(function(r) { setTimeout(r, 1000); }); continue; }
+      throw e;
+    }
+  }
+  return fetch(bpUrl, { headers: bpHeaders, signal: AbortSignal.timeout(bpTimeout) });
+}
 const UA_WECHAT = 'Mozilla/5.0 (Linux; Android 12; Pixel 6 Build/SQ3A.220705.003.A1) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/107.0.5304.141 Mobile Safari/537.36 XWEB/5060 MMWEBSDK/20221206 MMWEBID/8060 MicroMessenger/8.0.32.2380(0x28002034) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64';
 
 // ===== parse cache (by itemId, TTL 30min) =====
@@ -484,26 +509,27 @@ function _buildDouyinOk(data, url, isImageType, videoList) {
 // ===== BugPK: accept zjcdn direct link only; null on any failure =====
 async function _bugpkGetZjcdn(originalUrl) {
   try {
-    var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(60000),
-    });
+    var bpRes = await _bugpk2Fetch(originalUrl);
     if (!bpRes.ok) return null;
     var bpJson = await bpRes.json();
     if (bpJson.code !== 200 || !bpJson.data) return null;
     var bpData = bpJson.data;
     // ?????zjcdn ???? video_backup????????????? images ??
     var bpUrl = bpData.url || '';
-    if (bpUrl.indexOf('.zjcdn.com') > 0 && bpUrl.indexOf('aweme.snssdk.com') < 0) {
+    if (bpUrl && bpUrl.indexOf('http') === 0 && bpUrl.indexOf('aweme.snssdk.com') < 0) {
       return { ok: true, result: _buildDouyinOk(bpData, bpUrl, false) };
     }
     if (bpData.video_backup && bpData.video_backup.length) {
+      var bestBbUrl = '', bestBbBr = -1;
       for (var bbi = 0; bbi < bpData.video_backup.length; bbi++) {
         var bbUrl = bpData.video_backup[bbi] && bpData.video_backup[bbi].url || '';
-        if (bbUrl.indexOf('.zjcdn.com') > 0 && bbUrl.indexOf('aweme.snssdk.com') < 0) {
-          return { ok: true, result: _buildDouyinOk(bpData, bbUrl, false) };
+        if (bbUrl && bbUrl.indexOf('http') === 0 && bbUrl.indexOf('aweme.snssdk.com') < 0) {
+          var bbBrMatch = bbUrl.match(/[?&]br=(\\d+)/);
+          var bbBr = bbBrMatch ? parseInt(bbBrMatch[1]) : 0;
+          if (bbBr > bestBbBr) { bestBbBr = bbBr; bestBbUrl = bbUrl; }
         }
       }
+      if (bestBbUrl) return { ok: true, result: _buildDouyinOk(bpData, bestBbUrl, false) };
     }
     // ===== 动图/实况照片(live_photo)：每个元素带 image + video，视频为无水印直链 =====
     if (bpData.live_photo && bpData.live_photo.length) {
@@ -538,6 +564,7 @@ const PLATFORM_NAMES = {
   bilibili: 'bilibili',
   acfun: 'AcFun',
   ixigua: '西瓜视频',
+  toutiao: '今日头条',
   kuaishou: '快手',
   xiaohongshu: '小红书',
   weibo: '微博',
@@ -557,6 +584,7 @@ function detectPlatform(url) {
   if (/bilibili\.com|b23\.tv/.test(url)) return 'bilibili';
   if (/acfun\.cn/.test(url)) return 'acfun';
   if (/ixigua\.com/.test(url)) return 'ixigua';
+  if (/toutiao\.com|m\.toutiao\.com/.test(url)) return 'toutiao';
   if (/kuaishou\.com|gifshow\.com|kwai/.test(url)) return 'kuaishou';
   if (/xiaohongshu\.com|xhslink\.com|xhslink\.cn|xhs\.cn/.test(url)) return 'xiaohongshu';
   if (/weibo\.com/.test(url) || /t\.cn/.test(url)) return 'weibo';
@@ -651,365 +679,19 @@ function extractDouyinDataFromHtml(html) {
 }
 
 async function parseDouyin(originalUrl) {
-  // 解析item_id
   var itemId = extractDouyinItemId(originalUrl);
-  var isNote = /\/note\/|\/slides\/|\/images\//.test(originalUrl);
-  var realUrl = originalUrl;
-
-  // ===== BugPK primary: stable zjcdn original link, fall back to page parsing =====
   var bpCacheKey = itemId ? ('dy:' + itemId) : ('dy:url:' + originalUrl);
   var bpCached = _cacheGet(bpCacheKey);
   if (bpCached) return bpCached;
+
   var bpPrimary = await _bugpkGetZjcdn(originalUrl);
   if (bpPrimary) {
     _cacheSet(bpCacheKey, bpPrimary.result);
     return bpPrimary.result;
   }
 
-  if (itemId) {
-    // 关键：直接用iesdouyin.com/share/video/页面提取数据（不跟redirect�?
-    // 这个页面包含bit_rate等完整数据，而douyin.com/video/只有单条playwm
-    realUrl = isNote ? 'https://www.iesdouyin.com/share/note/' + itemId + '/' : 'https://www.iesdouyin.com/share/video/' + itemId + '/';
-  } else {
-    realUrl = await resolveRedirect(originalUrl);
-    itemId = extractDouyinItemId(realUrl) || extractDouyinItemId(originalUrl);
-    if (!isNote) isNote = /\/note\/|\/slides\/|\/images\//.test(realUrl);
-    if (!itemId) return fail('未能从链接中提取视频ID');
-
-    realUrl = isNote ? 'https://www.iesdouyin.com/share/note/' + itemId + '/' : 'https://www.iesdouyin.com/share/video/' + itemId + '/';
-  }
-
-  var html = await fetchHtml(realUrl, { Referer: 'https://www.douyin.com/' });
-  var item = extractDouyinDataFromHtml(html);
-
-  var video = (item && item.video) || {};
-  var author = (item && item.author) || {};
-  var playUrl = '';
-  var title = '';
-  var cover = '';
-  var authorName = '';
-  var authorId = '';
-  var avatar = '';
-  var images = [];
-  var videoList = [];
-
-  // ===== 从HTML item_list提取数据 =====
-  if (item) {
-    // 策略1: download_addr优先（原始上传视频，未转码，画质最高）
-    if (video.download_addr && video.download_addr.url_list) {
-      for (var di = 0; di < video.download_addr.url_list.length; di++) {
-        var du = video.download_addr.url_list[di].replace(/\\u002F/g, '/');
-        if (du && du.indexOf('aweme.snssdk.com') < 0) { playUrl = du; break; }
-      }
-      if (!playUrl && video.download_addr.url_list.length > 0) {
-        playUrl = video.download_addr.url_list[0].replace(/\\u002F/g, '/');
-      }
-    }
-
-    // 策略2: bit_rate最高码�?
-    if (!playUrl && video.bit_rate && video.bit_rate.length > 0) {
-      var bestBitrate = -1;
-      for (var bi = 0; bi < video.bit_rate.length; bi++) {
-        var br = video.bit_rate[bi];
-        var brRate = br.bit_rate || 0;
-        if (brRate > bestBitrate) {
-          var brUrlList = br.play_addr && br.play_addr.url_list || [];
-          for (var bui = 0; bui < brUrlList.length; bui++) {
-            var bu = brUrlList[bui].replace('playwm', 'play').replace(/\\u002F/g, '/');
-            if (bu && bu.indexOf('aweme.snssdk.com') < 0) { bestBitrate = brRate; playUrl = bu; break; }
-          }
-          if (!playUrl && brUrlList.length > 0) { bestBitrate = brRate; playUrl = brUrlList[0].replace('playwm', 'play').replace(/\\u002F/g, '/'); }
-        }
-      }
-    }
-
-    // 策略3: play_addr.url_list多索�?
-    if (!playUrl) {
-      var urlList = video.play_addr && video.play_addr.url_list || [];
-      for (var ui = 0; ui < urlList.length; ui++) {
-        var u = urlList[ui].replace('playwm', 'play').replace(/\\u002F/g, '/');
-        if (u.indexOf('aweme.snssdk.com') >= 0) { if (!playUrl) playUrl = u; }
-        else { playUrl = u; break; }
-      }
-    }
-
-    // 统一升级�?080p
-    if (playUrl) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
-
-    title = item.desc || (item.share_info && item.share_info.share_title) || (item.video && item.video.text) || (item.promotions && item.promotions[0] && item.promotions[0].title) || '';
-    cover = (video.origin_cover && video.origin_cover.url_list && video.origin_cover.url_list[0]) || (video.cover && video.cover.url_list && video.cover.url_list[0]) || (video.dynamic_cover && video.dynamic_cover.url_list && video.dynamic_cover.url_list[0]) || '';
-    authorName = author.nickname || '';
-    authorId = author.unique_id || author.short_id || author.uid || '';
-    avatar = (author.avatar_larger && author.avatar_larger.url_list && author.avatar_larger.url_list[0]) || (author.avatar_medium && author.avatar_medium.url_list && author.avatar_medium.url_list[0]) || (author.avatar_thumb && author.avatar_thumb.url_list && author.avatar_thumb.url_list[0]) || '';
-    images = _extractImageList(item.images);
-  }
-
-  // og:title 兜底
-  if (!title) {
-    var ogTitle = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/);
-    if (ogTitle && ogTitle[1] && ogTitle[1].indexOf('抖音') < 0 && ogTitle[1].indexOf('douyin') < 0) {
-      title = ogTitle[1];
-    }
-  }
-
-  // ===== HTML正则兜底 =====
-  if (!playUrl) {
-    var ogV = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]+)"/);
-    if (ogV) playUrl = ogV[1];
-    if (!playUrl) {
-      var videoUrlMatch = html.match(/"playAddr":\s*"([^"]+)"/) || html.match(/"srcUrl":\s*"([^"]+)"/) || html.match(/"video_url":\s*"([^"]+)"/) || html.match(/"play_url":\s*"([^"]+)"/);
-      if (videoUrlMatch) playUrl = videoUrlMatch[1].replace(/\\u002F/g, '/');
-    }
-  }
-
-  if (!cover) {
-    var ogI = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"/);
-    if (ogI) cover = ogI[1];
-  }
-
-  // ===== iesdouyin API 补充获取（无论HTML是否找到playUrl，都尝试API获取更高质量CDN地址�?=====
-  try {
-    var apiRes = await fetch('https://www.iesdouyin.com/aweme/v1/web/aweme/detail/?aweme_id=' + itemId, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.douyin.com/',
-        'Accept': 'application/json,text/html,application/xhtml+xml',
-      },
-    });
-    if (apiRes.ok) {
-      var apiJson = await apiRes.json();
-      var itemData = apiJson.aweme_detail || apiJson.data || apiJson;
-      if (itemData && itemData.video) {
-        var v = itemData.video;
-        // 从API获取最高码率非aweme的play_addr
-        var apiBestUrl = '';
-        if (v.bit_rate && v.bit_rate.length > 0) {
-          var apiBestBr = -1;
-          for (var bi2 = 0; bi2 < v.bit_rate.length; bi2++) {
-            var br2 = v.bit_rate[bi2];
-            var brRate2 = br2.bit_rate || 0;
-            if (brRate2 > apiBestBr) {
-              var brUrlList2 = br2.play_addr && br2.play_addr.url_list || [];
-              for (var bui2 = 0; bui2 < brUrlList2.length; bui2++) {
-                var bu2 = brUrlList2[bui2].replace('playwm', 'play').replace(/\\u002F/g, '/');
-                if (bu2 && bu2.indexOf('aweme.snssdk.com') < 0) {
-                  apiBestBr = brRate2;
-                  apiBestUrl = bu2;
-                  break;
-                }
-              }
-              // 如果API bit_rate全是aweme，先记着第一个备�?
-              if (!apiBestUrl && brUrlList2.length > 0) {
-                apiBestBr = brRate2;
-                apiBestUrl = brUrlList2[0].replace('playwm', 'play').replace(/\\u002F/g, '/');
-              }
-            }
-          }
-        }
-        // 如果API找到了非aweme的URL，或者当前的playUrl也是aweme但API有更高码率，用API�?
-        if (apiBestUrl && (apiBestUrl.indexOf('aweme.snssdk.com') < 0 || (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0))) {
-          playUrl = apiBestUrl;
-        }
-        // API的play_addr.url_list找非aweme的URL
-        if (!apiBestUrl || (playUrl && playUrl.indexOf('aweme.snssdk.com') >= 0)) {
-          var apiUrlList = v.play_addr && v.play_addr.url_list || [];
-          for (var ai = 0; ai < apiUrlList.length; ai++) {
-            var au = apiUrlList[ai].replace('playwm', 'play').replace(/\\u002F/g, '/');
-            if (au && au.indexOf('aweme.snssdk.com') < 0) { playUrl = au; break; }
-            if (au && !playUrl) playUrl = au;
-          }
-        }
-        // 补充字段（仅当HTML提取缺失时）
-        if (!title) title = itemData.desc || (itemData.share_info && itemData.share_info.share_title) || '';
-        if (!cover) cover = (v.origin_cover && v.origin_cover.url_list && v.origin_cover.url_list[0]) || (v.cover && v.cover.url_list && v.cover.url_list[0]) || '';
-        if (!authorName) authorName = (itemData.author && itemData.author.nickname) || '';
-        if (!authorId) authorId = (itemData.author && (itemData.author.unique_id || itemData.author.short_id || itemData.author.uid)) || '';
-        if (!avatar) avatar = (itemData.author && itemData.author.avatar_larger && itemData.author.avatar_larger.url_list && itemData.author.avatar_larger.url_list[0]) || (itemData.author && itemData.author.avatar_medium && itemData.author.avatar_medium.url_list && itemData.author.avatar_medium.url_list[0]) || '';
-      }
-    }
-  } catch(e) {}
-
-  // 最后确保升级到1080p
-  if (playUrl) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
-
-  // 最后确保aweme.snssdk.com也升级到1080p
-  if (playUrl && playUrl.indexOf('.zjcdn.com') < 0) {
-    try {
-      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
-        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(60000),
-      });
-      if (bpRes.ok) {
-        var bpJson = await bpRes.json();
-        if (bpJson.code === 200 && bpJson.data) {
-          var bpUrl = bpJson.data.url || '';
-          if (bpUrl.indexOf('.zjcdn.com') > 0 && bpUrl.indexOf('aweme.snssdk.com') < 0) {
-            playUrl = bpUrl;
-          } else if (bpJson.data.video_backup && bpJson.data.video_backup.length) {
-            for (var bbi2 = 0; bbi2 < bpJson.data.video_backup.length; bbi2++) {
-              var bbUrl2 = bpJson.data.video_backup[bbi2] && bpJson.data.video_backup[bbi2].url || '';
-              if (bbUrl2.indexOf('.zjcdn.com') > 0 && bbUrl2.indexOf('aweme.snssdk.com') < 0) { playUrl = bbUrl2; break; }
-            }
-          }
-          var bpExt = bpJson.data.extra || {};
-          var bpAE = bpExt.author_extra || {};
-          if (!title && (bpJson.data.title || bpJson.data.desc)) title = bpJson.data.title || bpJson.data.desc || '';
-          if (!cover && bpJson.data.cover) cover = bpJson.data.cover;
-          if (!authorName && bpJson.data.author && bpJson.data.author.name) authorName = bpJson.data.author.name;
-          // 抖音号：unique_id/short_id 优先（BugPK 的 author.id 是 uid）
-          if (!authorId) authorId = String(bpAE.unique_id || bpAE.short_id || (bpJson.data.author && bpJson.data.author.id) || '');
-          if (!avatar && bpJson.data.author && bpJson.data.author.avatar) avatar = bpJson.data.author.avatar;
-        }
-      }
-    } catch(e) { /* BugPK不可用，继续使用现有URL */ }
-  }
-
-  // ===== BugPK 兜底：HTML/API 全失败时，仍尝试 BugPK 解析 zjcdn 直链（含动图 live_photo） =====
-  if (!playUrl) {
-    try {
-      var bpResF = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
-        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(60000),
-      });
-      if (bpResF.ok) {
-        var bpJsonF = await bpResF.json();
-        if (bpJsonF.code === 200 && bpJsonF.data) {
-          var bpUrlF = bpJsonF.data.url || '';
-          if (bpUrlF.indexOf('.zjcdn.com') > 0 && bpUrlF.indexOf('aweme.snssdk.com') < 0) {
-            playUrl = bpUrlF;
-          } else if (bpJsonF.data.video_backup && bpJsonF.data.video_backup.length) {
-            for (var bbiF = 0; bbiF < bpJsonF.data.video_backup.length; bbiF++) {
-              var bbUrlF = bpJsonF.data.video_backup[bbiF] && bpJsonF.data.video_backup[bbiF].url || '';
-              if (bbUrlF.indexOf('.zjcdn.com') > 0 && bbUrlF.indexOf('aweme.snssdk.com') < 0) { playUrl = bbUrlF; break; }
-            }
-          }
-          // ===== 动图/实况照片(live_photo)兜底 =====
-          if (!playUrl && bpJsonF.data.live_photo && bpJsonF.data.live_photo.length) {
-            var lpVideosF = [];
-            var lpImagesF = [];
-            for (var lpiF = 0; lpiF < bpJsonF.data.live_photo.length; lpiF++) {
-              var lpItemF = bpJsonF.data.live_photo[lpiF] || {};
-              var lpVidF = lpItemF.video || '';
-              var lpImgF = lpItemF.image || '';
-              if (lpVidF && lpVidF.indexOf('http') === 0 && lpVideosF.indexOf(lpVidF) < 0) lpVideosF.push(lpVidF);
-              if (lpImgF && lpImgF.indexOf('http') === 0 && lpImagesF.indexOf(lpImgF) < 0) lpImagesF.push(lpImgF);
-            }
-            if (lpVideosF.length) {
-              playUrl = lpVideosF[0];
-              if (!videoList) videoList = lpVideosF;
-              if (lpImagesF.length) images = lpImagesF;
-            }
-          }
-          var bpExtF = bpJsonF.data.extra || {};
-          var bpAEF = bpExtF.author_extra || {};
-          if (!title && (bpJsonF.data.title || bpJsonF.data.desc)) title = bpJsonF.data.title || bpJsonF.data.desc || '';
-          if (!cover && bpJsonF.data.cover) cover = bpJsonF.data.cover;
-          if (!authorName && bpJsonF.data.author && bpJsonF.data.author.name) authorName = bpJsonF.data.author.name;
-          if (!authorId) authorId = String(bpAEF.unique_id || bpAEF.short_id || (bpJsonF.data.author && bpJsonF.data.author.id) || '');
-          if (!avatar && bpJsonF.data.author && bpJsonF.data.author.avatar) avatar = bpJsonF.data.author.avatar;
-          if (!images.length) images = _extractImageList(bpJsonF.data.images);
-        }
-      }
-    } catch(e) {}
-  }
-    // ===== 抖音官方 detail 接口 + a_bogus 签名兜底（图集/视频都可） =====
-  if (!playUrl) {
-    try {
-      var webidF = '7' + String(Date.now()).slice(0, 18);
-      var msF = 'xxx' + Math.random().toString(36).slice(2, 40);
-      var pF = {
-        'device_platform': 'webapp', 'aid': '6383', 'channel': 'channel_pc_web',
-        'update_version_code': '170400', 'pc_client_type': '1', 'pc_libra_divert': 'Windows',
-        'support_h265': '1', 'support_dash': '1', 'version_code': '170400', 'version_name': '17.4.0',
-        'cookie_enabled': 'true', 'screen_width': '1536', 'screen_height': '864',
-        'browser_language': 'zh-CN', 'browser_platform': 'Win32', 'browser_name': 'Chrome',
-        'browser_version': '124.0.0.0', 'browser_online': 'true', 'engine_name': 'Blink',
-        'engine_version': '124.0.0.0', 'os_name': 'Windows', 'os_version': '10',
-        'cpu_core_num': '16', 'device_memory': '8', 'platform': 'PC', 'downlink': '10',
-        'effective_type': '4g', 'round_trip_time': '200', 'webid': webidF,
-        'aweme_id': itemId, 'msToken': msF,
-      };
-      var qsF = Object.keys(pF).map(function(k){ return k + '=' + encodeURIComponent(pF[k]); }).join('&').replace(/%20/g, '+');
-      var aBogusF = sign_datail(qsF, UA);
-      var apiResF = await fetch('https://www.douyin.com/aweme/v1/web/aweme/detail/?' + qsF + '&a_bogus=' + encodeURIComponent(aBogusF), {
-        headers: { 'User-Agent': UA, 'Referer': 'https://www.douyin.com/', 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(60000),
-      });
-      var apiTextF = await apiResF.text();
-      if (apiTextF && apiTextF.length > 10) {
-        var apiJsonF = JSON.parse(apiTextF);
-        var dF = apiJsonF.aweme_detail || apiJsonF;
-        if (dF && dF.video) {
-          var vF = dF.video;
-          var bestBrF = -1;
-          if (vF.bit_rate && vF.bit_rate.length > 0) {
-            for (var biF = 0; biF < vF.bit_rate.length; biF++) {
-              var brF = vF.bit_rate[biF];
-              var brRateF = brF.bit_rate || 0;
-              if (brRateF > bestBrF) {
-                var brUrlsF = (brF.play_addr && brF.play_addr.url_list) || [];
-                for (var buF = 0; buF < brUrlsF.length; buF++) {
-                  var uF = brUrlsF[buF].replace('playwm', 'play').replace(/\\u002F/g, '/');
-                  if (uF) { bestBrF = brRateF; playUrl = uF; }
-                }
-              }
-            }
-          }
-          if (!playUrl && vF.play_addr && vF.play_addr.url_list) {
-            for (var aiF = 0; aiF < vF.play_addr.url_list.length; aiF++) {
-              var auF = vF.play_addr.url_list[aiF].replace('playwm', 'play').replace(/\\u002F/g, '/');
-              if (auF) { playUrl = auF; break; }
-            }
-          }
-          if (!playUrl && vF.download_addr && vF.download_addr.url_list && vF.download_addr.url_list.length) {
-            playUrl = vF.download_addr.url_list[0].replace(/\\u002F/g, '/');
-          }
-        }
-        if (!images.length && dF.images) images = _extractImageList(dF.images);
-        if (dF.author) {
-          var aF = dF.author;
-          if (!authorName && aF.nickname) authorName = aF.nickname;
-          if (!authorId) authorId = String(aF.unique_id || aF.short_id || aF.uid || '');
-          if (!avatar && aF.avatar_larger && aF.avatar_larger.url_list && aF.avatar_larger.url_list.length) avatar = aF.avatar_larger.url_list[0];
-          else if (!avatar && aF.avatar_thumb && aF.avatar_thumb.url_list && aF.avatar_thumb.url_list.length) avatar = aF.avatar_thumb.url_list[0];
-        }
-        if (!title && dF.desc) title = dF.desc;
-        if (!cover && dF.cover && dF.cover.url_list && dF.cover.url_list.length) cover = dF.cover.url_list[0];
-        if (playUrl) playUrl = playUrl.replace('ratio=720p', 'ratio=1080p');
-      }
-    } catch(e) {}
-  }
-
-  // ===== 统一返回：有视频返回video（保留封面图），纯图集返回image，都没有则失败 =====
-  if (playUrl) {
-    var retVideo = {
-      type: 'video',
-      title: title,
-      desc: title || '',
-      author: { name: authorName, id: authorId, avatar: avatar },
-      cover: cover,
-      url: playUrl,
-      images: images,
-    };
-    if (videoList && videoList.length) retVideo.videoList = videoList;
-    return ok('douyin', retVideo);
-  }
-  if (images.length) {
-    return ok('douyin', {
-      type: 'image',
-      title: title,
-      desc: title || '',
-      author: { name: authorName, id: authorId, avatar: avatar },
-      cover: cover,
-      url: '',
-      images: images,
-    });
-  }
   return fail('未提取到抖音视频地址');
 }
-
-
-
 async function parseBilibili(originalUrl) {
   var realUrl = originalUrl;
   if (realUrl.includes('b23.tv')) realUrl = await resolveRedirect(realUrl);
@@ -1045,9 +727,7 @@ async function parseBilibili(originalUrl) {
   // 
   if (!info || !videoUrl) {
     try {
-      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
-        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-      });
+      var bpRes = await _bugpk2Fetch(originalUrl);
       if (bpRes.ok) {
         var bpJson = await bpRes.json();
         if (bpJson.code === 200 && bpJson.data) {
@@ -1289,9 +969,7 @@ async function parseKuaishou(originalUrl) {
 
   if (!finalAuthor || !video.videoUrl) {
     try {
-      var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(realUrl), {
-        headers: { 'User-Agent': UA }
-      });
+      var res = await _bugpk2Fetch(originalUrl);
       if (res.ok) {
         var json = await res.json();
         var d = json && json.data;
@@ -1306,6 +984,24 @@ async function parseKuaishou(originalUrl) {
           if (d.images && d.images.length > 0) {
             if (!video.images) video.images = [];
             video.images = d.images.filter(u => u && !u.includes('notinline') && u.startsWith('http'));
+          }
+          // ===== 动图/实况照片(live_photo)：提取视频列表 =====
+          if (d.live_photo && d.live_photo.length) {
+            var ksLpVideos = [];
+            var ksLpImages = [];
+            for (var kslpi = 0; kslpi < d.live_photo.length; kslpi++) {
+              var ksLpItem = d.live_photo[kslpi] || {};
+              var ksLpVid = ksLpItem.video || '';
+              var ksLpImg = ksLpItem.image || '';
+              if (ksLpVid && ksLpVid.indexOf('http') === 0 && ksLpVideos.indexOf(ksLpVid) < 0) ksLpVideos.push(ksLpVid);
+              if (ksLpImg && ksLpImg.indexOf('http') === 0 && ksLpImages.indexOf(ksLpImg) < 0) ksLpImages.push(ksLpImg);
+            }
+            if (ksLpVideos.length) {
+              if (!video.videoUrl) video.videoUrl = ksLpVideos[0];
+              if (!video.videoList) video.videoList = [];
+              video.videoList = video.videoList.concat(ksLpVideos);
+              if (ksLpImages.length && (!video.images || !video.images.length)) video.images = ksLpImages;
+            }
           }
         }
       }
@@ -1335,22 +1031,25 @@ async function parseKuaishou(originalUrl) {
   }
 
     var ksImages = (video.images && video.images.length > 0) ? video.images : [];
-  return ok('kuaishou', {
-    type: ksImages.length ? 'image' : 'video',
+  var ksVideoList = (video.videoList && video.videoList.length > 0) ? video.videoList : [];
+  var ksRet = {
+    type: (video.videoUrl || ksVideoList.length) ? 'video' : (ksImages.length ? 'image' : 'video'),
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
-    url: ksImages.length ? '' : (video.videoUrl || ''),
-    images: ksImages
-  });
+    url: (video.videoUrl || ksVideoList.length) ? (video.videoUrl || ksVideoList[0] || '') : (ksImages.length ? '' : (video.videoUrl || '')),
+    images: ksImages,
+  };
+  if (ksVideoList.length) ksRet.videoList = ksVideoList;
+  return ok('kuaishou', ksRet);
 }
 
 // ===== С????=====
 
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
-  var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [];
+  var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [], xhsVideoList = [];
   var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
 
   // 
@@ -1426,8 +1125,26 @@ async function parseXiaohongshu(originalUrl) {
               if (noteData.video.play_addr) candidates.push({masterUrl: noteData.video.play_addr});
               videoUrl = pickBestVideoUrl(candidates);
             }
-            if (!images.length && noteData.imageList && noteData.imageList.length) {
-              noteData.imageList.forEach(function(img) { var iu = img.urlDefault || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^/]+\/[^/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
+            if (noteData.imageList && noteData.imageList.length) {
+              noteData.imageList.forEach(function(img) {
+                var iu = img.urlDefault || img.url || '';
+                if (iu) images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^/]+\/[^/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu );
+                // 动图/实况照片：提取视频URL（直接取第一个masterUrl，不经过pickBestVideoUrl）
+                if (img.livePhoto && img.stream) {
+                  var lpVid = '';
+                  if (img.stream.h264 && img.stream.h264.length) {
+                    lpVid = img.stream.h264[0].masterUrl || img.stream.h264[0].url || '';
+                  }
+                  if (!lpVid && img.stream.h265 && img.stream.h265.length) {
+                    lpVid = img.stream.h265[0].masterUrl || img.stream.h265[0].url || '';
+                  }
+                  if (lpVid) {
+                    lpVid = lpVid.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+                    if (lpVid.indexOf('http://') === 0) lpVid = 'https://' + lpVid.substring(7);
+                  }
+                  if (lpVid && xhsVideoList.indexOf(lpVid) < 0) xhsVideoList.push(lpVid);
+                }
+              });
             }
           }
         } catch(e) {}
@@ -1474,6 +1191,38 @@ async function parseXiaohongshu(originalUrl) {
 
   if (!videoUrl && !images.length && !cover) return fail('\u672a\u63d0\u53d6\u5230\u5c0f\u7ea2\u4e66\u5185\u5bb9');
 
+  // ===== BugPK 兜底：始终尝试获取动图live_photo完整视频列表（不覆盖已有videoUrl） =====
+
+  if (!xhsVideoList.length) {
+    try {
+      var xhsBpRes = await _bugpk2Fetch(originalUrl);
+      if (xhsBpRes.ok) {
+        var xhsBpJson = await xhsBpRes.json();
+        var xhsBpData = xhsBpJson && xhsBpJson.data;
+        if (xhsBpData) {
+          if (!title && xhsBpData.title) title = xhsBpData.title;
+          if (!cover && xhsBpData.cover) cover = xhsBpData.cover;
+          if (!authorName && xhsBpData.author && xhsBpData.author.name) authorName = xhsBpData.author.name;
+          if (!authorId && xhsBpData.author && xhsBpData.author.id) authorId = String(xhsBpData.author.id);
+          if (!authorAvatar && xhsBpData.author && xhsBpData.author.avatar) authorAvatar = xhsBpData.author.avatar;
+          if (!videoUrl && xhsBpData.url && xhsBpData.url.indexOf('http') === 0) videoUrl = xhsBpData.url;
+          if (!images.length && xhsBpData.images && xhsBpData.images.length) images = xhsBpData.images.filter(function(u){ return u && u.indexOf('http') === 0; });
+          // 动图/实况照片 live_photo（始终提取，不限制!videoUrl）
+          if (xhsBpData.live_photo && xhsBpData.live_photo.length) {
+            for (var xhslpi = 0; xhslpi < xhsBpData.live_photo.length; xhslpi++) {
+              var xhsLpItem = xhsBpData.live_photo[xhslpi] || {};
+              var xhsLpVid = xhsLpItem.video || '';
+              var xhsLpImg = xhsLpItem.image || '';
+              if (xhsLpVid && xhsLpVid.indexOf('http') === 0 && xhsVideoList.indexOf(xhsLpVid) < 0) xhsVideoList.push(xhsLpVid);
+              if (xhsLpImg && xhsLpImg.indexOf('http') === 0 && images.indexOf(xhsLpImg) < 0) images.push(xhsLpImg);
+            }
+            if (xhsVideoList.length && !videoUrl) videoUrl = xhsVideoList[0];
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
   // De-watermark all Xiaohongshu images regardless of extraction path
   for (var di = 0; di < images.length; di++) {
     var iu = images[di];
@@ -1482,13 +1231,15 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  var dataType = noteIsVideoType ? 'video' : (videoUrl && images.length <= 1 ? 'video' : (images.length ? 'image' : 'video'));
+  var dataType = noteIsVideoType ? 'video' : (videoUrl || xhsVideoList.length ? 'video' : (images.length ? 'image' : 'video'));
 
-  return ok('xiaohongshu', {
+  var xhsRet = {
     type: dataType, title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-    cover: cover || '', url: videoUrl || '', images: images,
-  });
+    cover: cover || '', url: videoUrl || (xhsVideoList.length ? xhsVideoList[0] : ''), images: images,
+  };
+  if (xhsVideoList.length) xhsRet.videoList = xhsVideoList;
+  return ok('xiaohongshu', xhsRet);
 }
 
 // 
@@ -1546,9 +1297,7 @@ async function parseBilibili(originalUrl) {
   // 
   if (!info || !videoUrl) {
     try {
-      var bpRes = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
-        headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-      });
+      var bpRes = await _bugpk2Fetch(originalUrl);
       if (bpRes.ok) {
         var bpJson = await bpRes.json();
         if (bpJson.code === 200 && bpJson.data) {
@@ -1788,30 +1537,6 @@ async function parseKuaishou(originalUrl) {
   if (!finalAuthor) finalAuthor = findFromInitState(html);
   if (!finalAuthor) finalAuthor = findFromHtmlMeta(html);
 
-  if (!finalAuthor || !video.videoUrl) {
-    try {
-      var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(realUrl), {
-        headers: { 'User-Agent': UA }
-      });
-      if (res.ok) {
-        var json = await res.json();
-        var d = json && json.data;
-        if (d) {
-          if (!finalAuthor) {
-            finalAuthor = validAuthor({ id: d.author && d.author.id, name: d.author && d.author.name, avatar: d.author && d.author.avatar });
-          }
-          if (!video.videoUrl && d.url) video.videoUrl = d.url;
-          if (!video.cover && d.cover) video.cover = d.cover;
-          if (!video.title && d.title) video.title = d.title;
-          // 提取图集图片
-          if (d.images && d.images.length > 0) {
-            if (!video.images) video.images = [];
-            video.images = d.images.filter(u => u && !u.includes('notinline') && u.startsWith('http'));
-          }
-        }
-      }
-    } catch (e) {}
-  }
 
   // 
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
@@ -1836,15 +1561,18 @@ async function parseKuaishou(originalUrl) {
   }
 
     var ksImages = (video.images && video.images.length > 0) ? video.images : [];
-  return ok('kuaishou', {
-    type: ksImages.length ? 'image' : 'video',
+  var ksVideoList = (video.videoList && video.videoList.length > 0) ? video.videoList : [];
+  var ksRet = {
+    type: (video.videoUrl || ksVideoList.length) ? 'video' : (ksImages.length ? 'image' : 'video'),
     title: video.title || '',
     desc: video.title || '',
     author: finalAuthor || { name: '', id: '', avatar: '' },
     cover: video.cover || '',
-    url: ksImages.length ? '' : (video.videoUrl || ''),
-    images: ksImages
-  });
+    url: (video.videoUrl || ksVideoList.length) ? (video.videoUrl || ksVideoList[0] || '') : (ksImages.length ? '' : (video.videoUrl || '')),
+    images: ksImages,
+  };
+  if (ksVideoList.length) ksRet.videoList = ksVideoList;
+  return ok('kuaishou', ksRet);
 }
 
 
@@ -2106,10 +1834,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
       try {
         var bpNoteUrl = "https://www.douyin.com/note/" + noteId + "/";
         var bpT = String(Date.now());
-        var bpRes3 = await fetch("https://api.bugpk.com/api/short_videos?url=" + encodeURIComponent(bpNoteUrl), {
-          headers: { "User-Agent": UA, "Accept": "application/json" },
-          signal: AbortSignal.timeout(8000),
-        });
+        var bpRes3 = await _bugpk2Fetch(bpNoteUrl, 8000);
         if (bpRes3.ok) {
           var bpJson3 = await bpRes3.json();
           if (bpJson3.code === 200 && bpJson3.data) {
@@ -2149,7 +1874,7 @@ var title = "", cover = "", authorName = "", authorAvatar = "", authorId = "", i
 
 async function parseXiaohongshu(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
-  var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [];
+  var videoUrl = '', title = '', cover = '', authorName = '', authorAvatar = '', authorId = '', images = [], xhsVideoList = [];
   var html = await fetchHtml(realUrl, { Referer: 'https://www.xiaohongshu.com/' });
 
   // 
@@ -2212,21 +1937,30 @@ async function parseXiaohongshu(originalUrl) {
             }
             if (!cover && noteData.cover) cover = noteData.cover.urlDefault || noteData.cover.url || noteData.cover.urlDefault || '';
             if (!videoUrl && noteData.video) {
-              var candidates = [];
-              if (noteData.video.media && noteData.video.media.stream) {
-                var s = noteData.video.media.stream;
-                (s.h264 || []).forEach(function(x) { candidates.push(x); });
-                (s.h265 || []).forEach(function(x) { candidates.push(x); });
+              if (noteData.video.consumer && noteData.video.consumer.originVideoKey) {
+                videoUrl = 'https://sns-video-hw.xhscdn.com/' + noteData.video.consumer.originVideoKey;
               }
-              if (noteData.video.masterUrl) candidates.push({masterUrl: noteData.video.masterUrl});
-              if (noteData.video.url) candidates.push({masterUrl: noteData.video.url});
-              if (noteData.video.videoUrl) candidates.push({masterUrl: noteData.video.videoUrl});
-              if (noteData.video.playUrl) candidates.push({masterUrl: noteData.video.playUrl});
-              if (noteData.video.play_addr) candidates.push({masterUrl: noteData.video.play_addr});
-              videoUrl = pickBestVideoUrl(candidates);
             }
-            if (!images.length && noteData.imageList && noteData.imageList.length) {
-              noteData.imageList.forEach(function(img) { var iu = img.urlDefault || img.url || ''; images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^/]+\/[^/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu ); });
+            if (noteData.imageList && noteData.imageList.length) {
+              noteData.imageList.forEach(function(img) {
+                var iu = img.urlDefault || img.url || '';
+                if (iu) images.push( iu.indexOf('sns-webpic-qc.xhscdn.com') >= 0 ? iu.replace(/^(?:https?:)?\/\/sns-webpic-qc\.xhscdn\.com\/[^/]+\/[^/]+\/([^!]+)(?:!\w+)?$/, 'https://ci.xiaohongshu.com/$1?imageView2/2/w/0/format/jpg/v3&c=v1') : iu );
+                // 动图/实况照片：提取视频URL（直接取第一个masterUrl，不经过pickBestVideoUrl）
+                if (img.livePhoto && img.stream) {
+                  var lpVid = '';
+                  if (img.stream.h264 && img.stream.h264.length) {
+                    lpVid = img.stream.h264[0].masterUrl || img.stream.h264[0].url || '';
+                  }
+                  if (!lpVid && img.stream.h265 && img.stream.h265.length) {
+                    lpVid = img.stream.h265[0].masterUrl || img.stream.h265[0].url || '';
+                  }
+                  if (lpVid) {
+                    lpVid = lpVid.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+                    if (lpVid.indexOf('http://') === 0) lpVid = 'https://' + lpVid.substring(7);
+                  }
+                  if (lpVid && xhsVideoList.indexOf(lpVid) < 0) xhsVideoList.push(lpVid);
+                }
+              });
             }
           }
         } catch(e) {}
@@ -2234,22 +1968,6 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  // 
-  if (!videoUrl) {
-    var muRegex = /"masterUrl"\s*:\s*"([^"]+)"/g;
-    var muMatch;
-    var url309 = '', url258 = '', urlOther = '';
-    while ((muMatch = muRegex.exec(html)) !== null) {
-      var mu = muMatch[1].replace(/\\u002F/g, '/').replace(/\\\//g, '/');
-      if (mu.indexOf('http://') === 0) mu = 'https://' + mu.substring(7);
-      if (mu.indexOf('_309') > 0) { if (!url309) url309 = mu; }
-      else if (mu.indexOf('_258') > 0) { if (!url258) url258 = mu; }
-      else if (!urlOther && mu.indexOf('_259') < 0 && (mu.indexOf('.mp4') > 0 || mu.indexOf('.m3u8') > 0)) { urlOther = mu; }
-    }
-    if (url309) videoUrl = url309;
-    else if (url258) videoUrl = url258;
-    else if (urlOther) videoUrl = urlOther;
-  }
 
   // 
   if (!title) {
@@ -2273,6 +1991,38 @@ async function parseXiaohongshu(originalUrl) {
 
   if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
 
+  // ===== BugPK 兜底：始终尝试获取动图live_photo完整视频列表（不覆盖已有videoUrl） =====
+
+  if (!xhsVideoList.length) {
+    try {
+      var xhsBpRes = await _bugpk2Fetch(originalUrl, 8000);
+      if (xhsBpRes.ok) {
+        var xhsBpJson = await xhsBpRes.json();
+        var xhsBpData = xhsBpJson && xhsBpJson.data;
+        if (xhsBpData) {
+          if (!title && xhsBpData.title) title = xhsBpData.title;
+          if (!cover && xhsBpData.cover) cover = xhsBpData.cover;
+          if (!authorName && xhsBpData.author && xhsBpData.author.name) authorName = xhsBpData.author.name;
+          if (!authorId && xhsBpData.author && xhsBpData.author.id) authorId = String(xhsBpData.author.id);
+          if (!authorAvatar && xhsBpData.author && xhsBpData.author.avatar) authorAvatar = xhsBpData.author.avatar;
+          if (!videoUrl && xhsBpData.url && xhsBpData.url.indexOf('http') === 0) videoUrl = xhsBpData.url;
+          if (!images.length && xhsBpData.images && xhsBpData.images.length) images = xhsBpData.images.filter(function(u){ return u && u.indexOf('http') === 0; });
+          // 动图/实况照片 live_photo（始终提取，不限制!videoUrl）
+          if (xhsBpData.live_photo && xhsBpData.live_photo.length) {
+            for (var xhslpi = 0; xhslpi < xhsBpData.live_photo.length; xhslpi++) {
+              var xhsLpItem = xhsBpData.live_photo[xhslpi] || {};
+              var xhsLpVid = xhsLpItem.video || '';
+              var xhsLpImg = xhsLpItem.image || '';
+              if (xhsLpVid && xhsLpVid.indexOf('http') === 0 && xhsVideoList.indexOf(xhsLpVid) < 0) xhsVideoList.push(xhsLpVid);
+              if (xhsLpImg && xhsLpImg.indexOf('http') === 0 && images.indexOf(xhsLpImg) < 0) images.push(xhsLpImg);
+            }
+            if (xhsVideoList.length && !videoUrl) videoUrl = xhsVideoList[0];
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
   // De-watermark all Xiaohongshu images regardless of extraction path
   for (var di = 0; di < images.length; di++) {
     var iu = images[di];
@@ -2281,13 +2031,15 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  var dataType = noteIsVideoType ? 'video' : (videoUrl && images.length <= 1 ? 'video' : (images.length ? 'image' : 'video'));
+  var dataType = noteIsVideoType ? 'video' : (videoUrl || xhsVideoList.length ? 'video' : (images.length ? 'image' : 'video'));
 
-  return ok('xiaohongshu', {
+  var xhsRet = {
     type: dataType, title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-    cover: cover || '', url: videoUrl || '', images: images,
-  });
+    cover: cover || '', url: videoUrl || (xhsVideoList.length ? xhsVideoList[0] : ''), images: images,
+  };
+  if (xhsVideoList.length) xhsRet.videoList = xhsVideoList;
+  return ok('xiaohongshu', xhsRet);
 }
 
 // 
@@ -2504,6 +2256,108 @@ async function parseXigua(originalUrl) {
   });
 }
 
+// ===== Toutiao =====
+async function parseToutiao(originalUrl) {
+  try {
+    var itemId = '';
+    var directMatch = originalUrl.match(/\/(video|i|w)\/(\d+)/);
+    if (directMatch) {
+      itemId = directMatch[2];
+    } else {
+      var redirectResp = await fetch(originalUrl, {
+        method: 'GET', redirect: 'manual',
+        headers: { 'User-Agent': UA }
+      });
+      var location = redirectResp.headers.get('location') || '';
+      var m = location.match(/\/(video|i|w)\/(\d+)/);
+      if (m) itemId = m[2];
+    }
+    if (!itemId) return fail('toutiao item_id not found');
+
+    var infoUrl = 'https://m.toutiao.com/i' + itemId + '/info/';
+    var infoResp = await fetch(infoUrl, { headers: { 'User-Agent': UA } });
+    var info = await infoResp.json();
+    var infoData = info.data || {};
+
+    // ===== 图集（微头条）=====
+    var threadBase = infoData.thread && infoData.thread.thread_base;
+    var imageList = threadBase && threadBase.large_image_list;
+    if (imageList && imageList.length > 0) {
+      var imgTitle = threadBase.title || threadBase.content || '';
+      var imgDesc = threadBase.content || imgTitle;
+      var imgAuthorName = '', imgAuthorId = '', imgAuthorAvatar = '';
+      var userInfo = threadBase.user && threadBase.user.info;
+      if (userInfo) {
+        imgAuthorName = userInfo.name || '';
+        var authorIdStr = userInfo.user_url || userInfo.schema || '';
+        var uidMatch = authorIdStr.match(/uid=(\d+)/) || authorIdStr.match(/\/profile\/(\d+)/);
+        imgAuthorId = uidMatch ? uidMatch[1] : '';
+        imgAuthorAvatar = userInfo.avatar_url || userInfo.avatar || '';
+      }
+      if (!imgAuthorAvatar) {
+        var avMatch = JSON.stringify(infoData).match(/(https?:\/\/[^"\s]+user-avatar[^"\s]+)/);
+        if (avMatch) imgAuthorAvatar = avMatch[1];
+      }
+      var images = [];
+      for (var ii = 0; ii < imageList.length; ii++) {
+        var imgUrl = imageList[ii].url || (imageList[ii].url_list && imageList[ii].url_list[0] && imageList[ii].url_list[0].url);
+        if (imgUrl) images.push(imgUrl);
+      }
+      if (images.length === 0) return fail('toutiao images empty');
+      return ok('toutiao', {
+        type: 'image', title: imgTitle, desc: imgDesc,
+        author: { name: imgAuthorName, id: imgAuthorId, avatar: imgAuthorAvatar },
+        cover: images[0], url: '', images: images
+      });
+    }
+
+    // ===== 视频 =====
+    var title = infoData.title || '';
+    var cover = infoData.poster_url || '';
+    var authorName = '', authorId = '', authorAvatar = '';
+    var mu = infoData.media_user;
+    if (mu) {
+      authorName = mu.name || mu.screen_name || '';
+      authorId = mu.user_id || mu.id || '';
+      authorAvatar = mu.avatar_url || '';
+    }
+
+    var htmlContent = infoData.content || '';
+    var tokenMatch = htmlContent.match(/data-token='([^']+)'/);
+    if (!tokenMatch) return fail('toutiao data-token not found');
+
+    var dataToken = tokenMatch[1];
+    var binary = atob(dataToken);
+    var bytes = new Uint8Array(binary.length);
+    for (var ti = 0; ti < binary.length; ti++) bytes[ti] = binary.charCodeAt(ti);
+    var decoded = JSON.parse(new TextDecoder('utf-8').decode(bytes));
+    var playToken = (decoded.GetPlayInfoToken || '').replace(/\\u0026/g, '&');
+    if (!playToken) return fail('toutiao play token invalid');
+
+    var playUrl = 'https://vod.bytedanceapi.com/?' + playToken;
+    var playResp = await fetch(playUrl, {
+      headers: { 'User-Agent': UA, 'Referer': 'https://m.toutiao.com/' }
+    });
+    var playData = await playResp.json();
+    var playList = playData.Result && playData.Result.Data && playData.Result.Data.PlayInfoList;
+    if (!playList || playList.length === 0) return fail('toutiao playlist empty');
+
+    var best = playList[0];
+    for (var pi = 1; pi < playList.length; pi++) {
+      if (playList[pi].Bitrate > best.Bitrate) best = playList[pi];
+    }
+    var videoUrl = best.MainPlayUrl || best.BackupPlayUrl || '';
+    if (!videoUrl) return fail('toutiao video url not found');
+
+    return ok('toutiao', {
+      type: 'video', title: title, desc: title,
+      author: { name: authorName, id: authorId, avatar: authorAvatar },
+      cover: cover, url: videoUrl, images: []
+    });
+  } catch (e) {
+    return fail('toutiao parse error: ' + (e && e.message ? e.message : String(e)));
+  }
+}
 // ===== AcFun=====
 async function parseAcfun(originalUrl) {
   var realUrl = await resolveRedirect(originalUrl);
@@ -2587,9 +2441,7 @@ async function parseAcfun(originalUrl) {
 async function parseWeibo(originalUrl) {
   // 
   try {
-    var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-    });
+    var res = await _bugpk2Fetch(originalUrl, 8000);
     if (res.ok) {
       var json = await res.json();
       if (json.code === 200 && json.data && json.data.url) {
@@ -2784,9 +2636,7 @@ async function parseWeixin(originalUrl) {
 
   // 全部HTML抓取失败，走BugPK
   try {
-    var res = await fetch('https://api.bugpk.com/api/short_videos?url=' + encodeURIComponent(originalUrl), {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-    });
+    var res = await _bugpk2Fetch(originalUrl, 8000);
     if (res.ok) {
       var json = await res.json();
       if (json.code === 200 && json.data && json.data.url) {
@@ -2811,12 +2661,6 @@ async function parseWeixin(originalUrl) {
 
 
 
-// 入口1：Cloudflare Worker 环境（addEventListener 存在时）
-if (typeof addEventListener !== 'undefined') {
-  addEventListener('fetch', event => {
-    event.respondWith(handleRequest(event.request));
-  });
-}
 
 async function handleRequest(request) {
 const url = new URL(request.url);
@@ -2962,6 +2806,7 @@ const platform = detectPlatform(targetUrl);
       case 'xiaohongshu': result = await parseXiaohongshu(targetUrl); break;
       case 'tiktok': result = await parseTiktok(targetUrl); break;
       case 'ixigua': result = await parseXigua(targetUrl); break;
+      case 'toutiao': result = await parseToutiao(targetUrl); break;
       case 'acfun': result = await parseAcfun(targetUrl); break;
       case 'weibo': result = await parseWeibo(targetUrl); break;
       case 'weixin': result = await parseWeixin(targetUrl); break;
@@ -2974,27 +2819,22 @@ const platform = detectPlatform(targetUrl);
 }
 
 
-
-// 入口2：Vercel / 腾讯云SCF(Node) 环境兼容入口（Cloudflare 无 module 时自动跳过）
-if (typeof module !== 'undefined' && module.exports) {
+// Vercel Node.js 入口
+if (typeof module !== "undefined" && module.exports) {
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
 
-  if (req.method === 'OPTIONS') {
-    res.statusCode = 200;
-    res.end();
-    return;
-  }
+  if (req.method === "OPTIONS") { res.statusCode = 200; res.end(); return; }
 
   const request = {
-    method: req.method || 'GET',
-    url: (req.url || '').startsWith('http') ? req.url : 'https://' + (req.headers.host || 'localhost') + (req.url || '/'),
+    method: req.method || "GET",
+    url: (req.url || "").startsWith("http") ? req.url : "https://" + (req.headers.host || "localhost") + (req.url || "/"),
     headers: {
       get: (name) => {
-        const v = req.headers[(name || '').toLowerCase()];
+        const v = req.headers[(name || "").toLowerCase()];
         return Array.isArray(v) ? v[0] : (v === undefined ? null : v);
       }
     }
@@ -3002,9 +2842,9 @@ module.exports = async (req, res) => {
 
   try {
     const response = await handleRequest(request);
-    const ct = response.headers.get('Content-Type') || 'application/json; charset=utf-8';
+    const ct = response.headers.get("Content-Type") || "application/json; charset=utf-8";
     res.statusCode = response.status;
-    res.setHeader('Content-Type', ct);
+    res.setHeader("Content-Type", ct);
     if (/video|audio|octet-stream|image/.test(ct)) {
       res.end(Buffer.from(await response.arrayBuffer()));
     } else {
@@ -3012,8 +2852,8 @@ module.exports = async (req, res) => {
     }
   } catch (e) {
     res.statusCode = 500;
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.end(JSON.stringify({ code: 500, msg: '解析失败: ' + (e && e.message ? e.message : String(e)) }));
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(JSON.stringify({ code: 500, msg: "解析失败: " + (e && e.message ? e.message : String(e)) }));
   }
 };
 }
