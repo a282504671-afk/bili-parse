@@ -2254,6 +2254,19 @@ async function parseTiktok(originalUrl) {
   if (!videoUrl && paMatch) videoUrl = tiktokUnescapeUrl(paMatch[1]);
   if (!title && descMatch) title = descMatch[1];
 
+  // 扫描所有视频URL，按bt值选最高码率
+  if (!videoUrl) {
+    var allVidRe = /https:\/\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
+    var vm, bestBt = -1, bestUrl = '';
+    var allVidRe = /https:\/\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
+      var vu = tiktokUnescapeUrl(vm[0]);
+      var vbm = vu.match(/bt=(\\d+)/);
+      var vb = vbm ? parseInt(vbm[1]) : 0;
+      if (vb > bestBt) { bestBt = vb; bestUrl = vu; }
+    }
+    if (bestUrl) videoUrl = bestUrl;
+  }
+
   // 2b URL作者ID兜底
   if (!authorId) {
     var urlUid = realUrl.match(/@([^/?]+)/);
