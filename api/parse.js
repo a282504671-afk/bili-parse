@@ -1539,18 +1539,36 @@ async function parseKuaishou(originalUrl) {
 
 
   // 新增：直接正则匹配 snake_case 字段（v.m.chenzhongtech.com 页面格式）
+  // snake_case 匹配：找真正的视频作者（跳过配乐作者和访问者）
   if (!finalAuthor || !finalAuthor.name || !finalAuthor.id) {
-    var scName = html.match(/"user_name"\s*:\s*"([^"]+)"/);
-    var scId = html.match(/"user_id"\s*:\s*(\d{5,15})/);
-    var scAvatar = html.match(/"headurl"\s*:\s*"([^"]+)"/) || html.match(/"headUrl"\s*:\s*"([^"]+)"/);
+    var scName = '', scId = '', scAvatar = '';
+    // 真正作者的 user 对象后面跟着 isSubscribe/isFollowing/showCount
+    var anchorPos = html.indexOf('"isSubscribe"');
+    if (anchorPos < 0) anchorPos = html.indexOf('"isFollowing"');
+    if (anchorPos > 0) {
+      // 在 anchor 前面 2000 字符内找最近的 user_name/user_id/headurl
+      var region = html.substring(Math.max(0, anchorPos - 2000), anchorPos);
+      var mName = region.match(/"user_name"\s*:\s*"([^"]+)"/);
+      var mId = region.match(/"user_id"\s*:\s*(\d{5,15})/);
+      var mAv = region.match(/"headurl"\s*:\s*"([^"]+)"/);
+      if (mName) scName = mName[1];
+      if (mId) scId = mId[1];
+      if (mAv) scAvatar = mAv[1];
+    }
+    // 兜底：取最后一个 user_name/user_id（真正作者通常在配乐和访问者之后）
+    if (!scId) {
+      var allIdMatches = [...html.matchAll(/"user_id"\s*:\s*(\d{5,15})/g)];
+      var allNameMatches = [...html.matchAll(/"user_name"\s*:\s*"([^"]+)"/g)];
+      if (allIdMatches.length) scId = allIdMatches[allIdMatches.length - 1][1];
+      if (allNameMatches.length) scName = allNameMatches[allNameMatches.length - 1][1];
+    }
     if (scName || scId) {
-      if (!finalAuthor) finalAuthor = { name: "", id: "", avatar: "" };
-      if (!finalAuthor.name && scName) finalAuthor.name = decodeText(scName[1]);
-      if (!finalAuthor.id && scId) finalAuthor.id = String(scId[1]);
-      if (!finalAuthor.avatar && scAvatar) finalAuthor.avatar = normalizeUrl(scAvatar[1]);
+      if (!finalAuthor) finalAuthor = { name: '', id: '', avatar: '' };
+      if (!finalAuthor.name && scName) finalAuthor.name = decodeText(scName);
+      if (!finalAuthor.id && scId) finalAuthor.id = String(scId);
+      if (!finalAuthor.avatar && scAvatar) finalAuthor.avatar = normalizeUrl(scAvatar);
     }
   }
-
   // BugPK 2.0 补全：SSR 作者信息不全时调用
   var needAuthor = !finalAuthor || !finalAuthor.name || !finalAuthor.id;
   var needVideo = !video.videoUrl;
