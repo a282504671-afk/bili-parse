@@ -1549,8 +1549,17 @@ async function parseKuaishou(originalUrl) {
       var profileMarker = '"profile":{"eid":"' + authorEid + '"';
       var profPos = html.indexOf(profileMarker);
       if (profPos < 0) {
-        // 兜底：只找 "eid":"<authorEid>"
+        // 兜底1：只找 "eid":"<authorEid>"
         profPos = html.indexOf('"eid":"' + authorEid + '"');
+      }
+      if (profPos < 0) {
+        // 兜底2：找 userEid，往后找 profile
+        var uePos = html.indexOf('"userEid":"' + authorEid + '"');
+        if (uePos >= 0) {
+          var afterRegion = html.substring(uePos, uePos + 5000);
+          var profInAfter = afterRegion.indexOf('"profile":{"eid":"' + authorEid + '"');
+          if (profInAfter >= 0) profPos = uePos + profInAfter;
+        }
       }
       if (profPos >= 0) {
         // 从 profile 开始取 2000 字符，提取字段
