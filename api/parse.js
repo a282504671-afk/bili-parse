@@ -1539,18 +1539,22 @@ async function parseKuaishou(originalUrl) {
 
 
   // 新增：直接正则匹配 snake_case 字段（v.m.chenzhongtech.com 页面格式）
-  // snake_case 匹配：用重定向URL里的 userId= 参数精确定位作者
+  // snake_case 匹配：用重定向URL里的 userId= 参数精确定位作者 profile 对象
   if (!finalAuthor || !finalAuthor.name || !finalAuthor.id) {
     var scName = '', scId = '', scAvatar = '';
-    // 从 realUrl 提取 userId 参数（作者eid）
     var eidMatch = realUrl.match(/[?&]userId=([^&]+)/);
     if (eidMatch) {
       var authorEid = eidMatch[1];
-      // 在HTML里找 "eid":"<authorEid>" 的位置，然后在附近提取作者信息
-      var eidPos = html.indexOf('"eid":"' + authorEid + '"');
-      if (eidPos > 0) {
-        // 在 eid 位置前后 800 字符内找 user_name/user_id/headurl
-        var region = html.substring(Math.max(0, eidPos - 800), eidPos + 800);
+      // 找 "profile":{"eid":"<authorEid>" 精确位置
+      var profileMarker = '"profile":{"eid":"' + authorEid + '"';
+      var profPos = html.indexOf(profileMarker);
+      if (profPos < 0) {
+        // 兜底：只找 "eid":"<authorEid>"
+        profPos = html.indexOf('"eid":"' + authorEid + '"');
+      }
+      if (profPos >= 0) {
+        // 从 profile 开始取 2000 字符，提取字段
+        var region = html.substring(profPos, profPos + 2000);
         var mName = region.match(/"user_name"\s*:\s*"([^"]+)"/);
         var mId = region.match(/"user_id"\s*:\s*(\d{5,15})/);
         var mAv = region.match(/"headurl"\s*:\s*"([^"]+)"/);
