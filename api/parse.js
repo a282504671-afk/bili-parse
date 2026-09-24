@@ -2222,12 +2222,22 @@ async function parseTiktok(originalUrl) {
       if (!title && ip.title) title = ip.title;
     }
     var v = item.video || {};
+    // 遍历 bitRateList 选最高码率
+    var bestBitrate = -1;
+    if (Array.isArray(v.bitRateList)) {
+      for (var bi = 0; bi < v.bitRateList.length; bi++) {
+        var br = v.bitRateList[bi];
+        var brVal = br.bitRate || 0;
+        var brUrl = tiktokUrlFromField(br.downloadAddr) || tiktokUrlFromField(br.playAddr);
+        if (brUrl && brVal > bestBitrate) { bestBitrate = brVal; videoUrl = brUrl; }
+      }
+    }
     if (!videoUrl) videoUrl = tiktokUrlFromField(v.downloadAddr) || tiktokUrlFromField(v.playAddr);
     if (!cover) cover = tiktokUrlFromField(v.cover) || tiktokUrlFromField(v.originCover);
     if (!videoUrl) videoUrl = tiktokUrlFromField(item.playAddr);
     if (!cover) cover = tiktokUrlFromField(item.cover);
-  }
 
+  }
   // ② 正则兜底（仅补齐①未取到的字段，避免覆盖已解析数据）
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
