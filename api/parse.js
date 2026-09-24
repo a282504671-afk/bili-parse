@@ -2243,6 +2243,12 @@ async function parseTiktok(originalUrl) {
   if (!cover && coverMatch) cover = tiktokUnescapeUrl(coverMatch[1]);
   if (!title && descMatch) title = descMatch[1];
 
+  // 2b URL作者ID兜底
+  if (!authorId) {
+    var urlUid = realUrl.match(/@([^/?]+)/);
+    if (urlUid) authorId = decodeURIComponent(urlUid[1]);
+  }
+
   // 图集图片兜底：从页面 urlList 中收集 photomode 原图直链（按图片ID去重）
   if (!images.length) {
     var urlListRe = /"urlList":\["([^"]+)"/g;
@@ -2258,6 +2264,19 @@ async function parseTiktok(originalUrl) {
           images.push(u2);
         }
       }
+    }
+  }
+
+  // 图集图片兜底2：直接从HTML提取photomode图片URL
+  if (!images.length) {
+    var directImgRe = /https:\\?\\/\\?\\/[^"\\]*tos-alisg-i-photomode[^"\\]*/g;
+    var dm;
+    var seenDirect = {};
+    while ((dm = directImgRe.exec(html)) !== null) {
+      var du = tiktokUnescapeUrl(dm[0]).replace(/&amp;/g, '&');
+      var dk = du.match(/photomode-sg\\/([^~?]+)/);
+      var dkey = dk ? dk[1] : du;
+      if (!seenDirect[dkey]) { seenDirect[dkey] = true; images.push(du); }
     }
   }
 
