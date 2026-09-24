@@ -1539,23 +1539,41 @@ async function parseKuaishou(originalUrl) {
 
 
   // 新增：直接正则匹配 snake_case 字段（v.m.chenzhongtech.com 页面格式）
-  // snake_case 匹配：找真正的视频作者（跳过配乐作者和访问者）
+  // snake_case 匹配：用重定向URL里的 userId= 参数精确定位作者
   if (!finalAuthor || !finalAuthor.name || !finalAuthor.id) {
     var scName = '', scId = '', scAvatar = '';
-    // 真正作者的 user 对象后面跟着 isSubscribe/isFollowing/showCount
-    var anchorPos = html.indexOf('"isSubscribe"');
-    if (anchorPos < 0) anchorPos = html.indexOf('"isFollowing"');
-    if (anchorPos > 0) {
-      // 在 anchor 前面 2000 字符内找最近的 user_name/user_id/headurl
-      var region = html.substring(Math.max(0, anchorPos - 2000), anchorPos);
-      var mName = region.match(/"user_name"\s*:\s*"([^"]+)"/);
-      var mId = region.match(/"user_id"\s*:\s*(\d{5,15})/);
-      var mAv = region.match(/"headurl"\s*:\s*"([^"]+)"/);
-      if (mName) scName = mName[1];
-      if (mId) scId = mId[1];
-      if (mAv) scAvatar = mAv[1];
+    // 从 realUrl 提取 userId 参数（作者eid）
+    var eidMatch = realUrl.match(/[?&]userId=([^&]+)/);
+    if (eidMatch) {
+      var authorEid = eidMatch[1];
+      // 在HTML里找 "eid":"<authorEid>" 的位置，然后在附近提取作者信息
+      var eidPos = html.indexOf('"eid":"' + authorEid + '"');
+      if (eidPos > 0) {
+        // 在 eid 位置前后 800 字符内找 user_name/user_id/headurl
+        var region = html.substring(Math.max(0, eidPos - 800), eidPos + 800);
+        var mName = region.match(/"user_name"\s*:\s*"([^"]+)"/);
+        var mId = region.match(/"user_id"\s*:\s*(\d{5,15})/);
+        var mAv = region.match(/"headurl"\s*:\s*"([^"]+)"/);
+        if (mName) scName = mName[1];
+        if (mId) scId = mId[1];
+        if (mAv) scAvatar = mAv[1];
+      }
     }
-    // 兜底：取最后一个 user_name/user_id（真正作者通常在配乐和访问者之后）
+    // 兜底：用 isSubscribe 锚点找
+    if (!scId) {
+      var anchorPos = html.indexOf('"isSubscribe"');
+      if (anchorPos < 0) anchorPos = html.indexOf('"isFollowing"');
+      if (anchorPos > 0) {
+        var region2 = html.substring(Math.max(0, anchorPos - 2000), anchorPos);
+        var mName2 = region2.match(/"user_name"\s*:\s*"([^"]+)"/);
+        var mId2 = region2.match(/"user_id"\s*:\s*(\d{5,15})/);
+        var mAv2 = region2.match(/"headurl"\s*:\s*"([^"]+)"/);
+        if (mName2) scName = mName2[1];
+        if (mId2) scId = mId2[1];
+        if (mAv2) scAvatar = mAv2[1];
+      }
+    }
+    // 最终兜底：取最后一个 user_id/user_name
     if (!scId) {
       var allIdMatches = [...html.matchAll(/"user_id"\s*:\s*(\d{5,15})/g)];
       var allNameMatches = [...html.matchAll(/"user_name"\s*:\s*"([^"]+)"/g)];
