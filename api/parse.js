@@ -2268,16 +2268,17 @@ async function parseTiktok(originalUrl) {
   }
 
   // 图集图片兜底2：直接从HTML提取photomode图片URL
+  if (!images.length) {
     var directImgRe = /https:\/\/[^"\\]*tos-alisg-i-photomode[^"\\]*/g;
     var dm;
     var seenDirect = {};
     while ((dm = directImgRe.exec(html)) !== null) {
+      var du = tiktokUnescapeUrl(dm[0]).replace(/&amp;/g, '&');
       var dk = du.match(/photomode-sg\/([^~?]+)/);
       var dkey = dk ? dk[1] : du;
       if (!seenDirect[dkey]) { seenDirect[dkey] = true; images.push(du); }
     }
   }
-
   // ③ 图集：返回 type=image + images
   if (images.length) {
     return ok('tiktok', {
