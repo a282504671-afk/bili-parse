@@ -2255,7 +2255,7 @@ async function parseTiktok(originalUrl) {
   if (!title && descMatch) title = descMatch[1];
 
   // 扫描所有视频URL，按bt值选最高码率
-  if (!videoUrl) {
+    var allVidRe = /https:\\?\/\\?\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
     var allVidRe = /https:\/\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
     var vm, bestBt = -1, bestUrl = '';
     while ((vm = allVidRe.exec(html)) !== null) {
