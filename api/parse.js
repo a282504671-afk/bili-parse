@@ -2310,7 +2310,7 @@ async function parseTiktok(originalUrl) {
     }
   } catch(e) {}
 
-  if (!videoUrl) return fail('未提取到TikTok视频地址');
+  if (!videoUrl) return fail('未提取到TikTok视频地址 (mdInputName=' + mdInputName + ', mdHidden=' + (mdHidden?'yes':'no') + ', mdResultLen=' + (typeof mdResult !== 'undefined' ? mdResult.length : 'undef') + ')');
 
   return ok('tiktok', {
     type: 'video', title: title || '', desc: title || '',
