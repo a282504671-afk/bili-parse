@@ -2202,7 +2202,7 @@ async function parseTiktok(originalUrl) {
   var title = '', cover = '', videoUrl = '', authorName = '', authorId = '', authorAvatar = '';
   var images = [];
 
-  // ① 优先：移动端页面 __UNIVERSAL_DATA_FOR_REHYDRATION__ 内完整 itemStruct（含图集 images / 作者 / 标题 / 视频直链）
+  // ① 从页面提取图集图片和作者信息
   var item = extractTiktokItemStruct(html);
   if (item) {
     var a = item.author || {};
@@ -2219,70 +2219,24 @@ async function parseTiktok(originalUrl) {
         if (u) images.push(u);
       }
       if (!cover) cover = tiktokUrlFromField(ip.cover);
-      if (!title && ip.title) title = ip.title;
     }
-    var v = item.video || {};
-    // 遍历 bitRateList 选最高码率
-    var bestBitrate = -1;
-    if (Array.isArray(v.bitRateList)) {
-      for (var bi = 0; bi < v.bitRateList.length; bi++) {
-        var br = v.bitRateList[bi];
-        var brVal = br.bitRate || 0;
-        var brUrl = tiktokUrlFromField(br.downloadAddr) || tiktokUrlFromField(br.playAddr);
-        if (brUrl && brVal > bestBitrate) { bestBitrate = brVal; videoUrl = brUrl; }
-      }
-    }
-    if (!videoUrl) videoUrl = tiktokUrlFromField(v.downloadAddr) || tiktokUrlFromField(v.playAddr);
-    if (!cover) cover = tiktokUrlFromField(v.cover) || tiktokUrlFromField(v.originCover);
-    if (!videoUrl) videoUrl = tiktokUrlFromField(item.playAddr);
-    if (!cover) cover = tiktokUrlFromField(item.cover);
-
   }
-  // ② 正则兜底（仅补齐①未取到的字段，避免覆盖已解析数据）
+
+  // ② 正则补齐
   var allNick = html.match(/"nickname":"([^"]+)"/g);
   var allUid = html.match(/"uniqueId":"([^"]+)"/g);
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
-  var paMatch = html.match(/"playAddr":"([^"]+)"/);
-  var coverMatch = html.match(/"cover":"([^"]+)"/);
-  var daMatch = html.match(/"downloadAddr":"([^"]+)"/);
-  var descMatch = html.match(/"desc":"([^"]+)"/);
-
   if (!authorName && allNick && allNick.length) authorName = allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1];
   if (!authorId && allUid && allUid.length) authorId = allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1];
   if (!authorAvatar && allAvatar && allAvatar.length) authorAvatar = tiktokUnescapeUrl(allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1]);
-  if (!videoUrl && daMatch) videoUrl = tiktokUnescapeUrl(daMatch[1]);
-  if (!videoUrl && paMatch) videoUrl = tiktokUnescapeUrl(paMatch[1]);
-  if (!title && descMatch) title = descMatch[1];
 
-  // 扫描所有视频URL，按bt值选最高码率
-  {
-    var scanIdx = 0, scanBestBt = -1, scanBestUrl = '';
-    while ((scanIdx = html.indexOf('tos-alisg-p', scanIdx)) !== -1) {
-      var sStart = scanIdx;
-      for (var si = scanIdx; si > scanIdx - 300; si--) {
-        if (html[si] === '"' || html[si] === "'") { sStart = si + 1; break; }
-      }
-      var sEnd = scanIdx;
-      for (var sj = scanIdx; sj < scanIdx + 500; sj++) {
-        if (html[sj] === '"' || html[sj] === "'") { sEnd = sj; break; }
-      }
-      var sRaw = html.substring(sStart, sEnd);
-      var sUrl = sRaw.replace(/\\\//g, '/').replace(/\\u002F/g, '/');
-      var sBtM = sUrl.match(/bt=(\d+)/);
-      var sBt = sBtM ? parseInt(sBtM[1]) : 0;
-      if (sBt > scanBestBt) { scanBestBt = sBt; scanBestUrl = sUrl; }
-      scanIdx += 10;
-    }
-    if (scanBestUrl) videoUrl = scanBestUrl;
-  }
-
-  // 2b URL作者ID兜底
+  // URL提取作者ID兜底
   if (!authorId) {
     var urlUid = realUrl.match(/@([^/?]+)/);
     if (urlUid) authorId = decodeURIComponent(urlUid[1]);
   }
 
-  // 图集图片兜底：从页面 urlList 中收集 photomode 原图直链（按图片ID去重）
+  // 图集图片兜底
   if (!images.length) {
     var urlListRe = /"urlList":\["([^"]+)"/g;
     var um;
@@ -2292,15 +2246,10 @@ async function parseTiktok(originalUrl) {
       if (u2.indexOf('photomode') >= 0) {
         var keyMatch = u2.match(/photomode-sg\/([^~?]+)/);
         var key = keyMatch ? keyMatch[1] : u2;
-        if (!seenImg[key]) {
-          seenImg[key] = true;
-          images.push(u2);
-        }
+        if (!seenImg[key]) { seenImg[key] = true; images.push(u2); }
       }
     }
   }
-
-  // 图集图片兜底2：直接从HTML提取photomode图片URL
   if (!images.length) {
     var directImgRe = /https:\/\/[^"\\]*tos-alisg-i-photomode[^"\\]*/g;
     var dm;
@@ -2312,40 +2261,60 @@ async function parseTiktok(originalUrl) {
       if (!seenDirect[dkey]) { seenDirect[dkey] = true; images.push(du); }
     }
   }
-  // ③ 图集：返回 type=image + images
+
+  // 图集直接返回
   if (images.length) {
     return ok('tiktok', {
       type: 'image', title: title || '', desc: title || '',
-      author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-      cover: cover || images[0] || '', url: '', images: images,
+      author: { name: authorName || '', id: authorId, avatar: authorAvatar || '' },
+      cover: cover || images[0], url: '', images: images,
     });
   }
 
-  if (!videoUrl) return fail('未提取到TikTok视频地址');
-
-  // ④ TikWM 补高清（保留原逻辑）
+  // ③ 视频走 MusicalDown 拿1080P
+  var mdUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   try {
-    var tikRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl), {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-    });
-    if (tikRes.ok) {
-      var tikJson = await tikRes.json();
-      if (tikJson.code === 0 && tikJson.data) {
-        var td = tikJson.data;
-        if (td.hdplay || td.play || td.url) videoUrl = td.hdplay || td.play || td.url;
-        if (!authorName) authorName = (td.author && td.author.nickname) || '';
-        if (!authorId) authorId = (td.author && td.author.unique_id) || '';
-        if (!authorAvatar) authorAvatar = (td.author && td.author.avatar) || '';
-        if (!cover) cover = td.cover || '';
-        if (!title) title = td.title || '';
+    var mdGet = await fetch('https://musicaldown.com/en', { headers: { 'User-Agent': mdUA } });
+    var mdHtml = await mdGet.text();
+    var mdInputName = (mdHtml.match(/name="(_[a-zA-Z]+)"[^>]*id="link_url"/) || [])[1] || '';
+    var mdHidden = mdHtml.match(/name="(_[a-zA-Z]+)"[^>]*type="hidden"[^>]*value="([^"]*)"/);
+    if (mdInputName && mdHidden) {
+      var mdPostBody = mdInputName + '=' + encodeURIComponent(originalUrl || realUrl) +
+        '&' + mdHidden[1] + '=' + mdHidden[2] + '&verify=1';
+      var mdPost = await fetch('https://musicaldown.com/download', {
+        method: 'POST',
+        headers: { 'User-Agent': mdUA, 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://musicaldown.com/en' },
+        body: mdPostBody
+      });
+      var mdResult = await mdPost.text();
+      var mdAllLinks = [...mdResult.matchAll(/href="(https:\/\/fastdl\.muscdn\.app\/v3\?token=([^"]+))"/g)];
+      for (var mdi = 0; mdi < mdAllLinks.length; mdi++) {
+        var mdToken = mdAllLinks[mdi][2];
+        var mdPayload = mdToken.split('.')[1];
+        try {
+          mdPayload = mdPayload.replace(/-/g, '+').replace(/_/g, '/');
+          while (mdPayload.length % 4) mdPayload += '=';
+          var mdJson = JSON.parse(atob(mdPayload));
+          if (mdJson.filename && mdJson.filename.indexOf('[HD]') >= 0 && mdJson.url) {
+            videoUrl = mdJson.url;
+          } else if (!videoUrl && mdJson.url && mdJson.url.indexOf('.mp4') >= 0) {
+            videoUrl = mdJson.url;
+          }
+        } catch(e) {}
+      }
+      if (!authorId) {
+        var mdAuthor = mdResult.match(/@([a-zA-Z0-9._]+)/);
+        if (mdAuthor) authorId = mdAuthor[1];
       }
     }
   } catch(e) {}
 
+  if (!videoUrl) return fail('未提取到TikTok视频地址');
+
   return ok('tiktok', {
     type: 'video', title: title || '', desc: title || '',
-    author: { name: authorName || '', id: authorId || '', avatar: authorAvatar || '' },
-    cover: cover || '', url: videoUrl || '', images: [],
+    author: { name: authorName || '', id: authorId, avatar: authorAvatar || '' },
+    cover: cover, url: videoUrl, images: [],
   });
 }
 
