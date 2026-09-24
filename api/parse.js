@@ -2258,9 +2258,9 @@ async function parseTiktok(originalUrl) {
   if (!videoUrl) {
     var allVidRe = /https:\/\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
     var vm, bestBt = -1, bestUrl = '';
-    var allVidRe = /https:\/\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
+    while ((vm = allVidRe.exec(html)) !== null) {
       var vu = tiktokUnescapeUrl(vm[0]);
-      var vbm = vu.match(/bt=(\\d+)/);
+      var vbm = vu.match(/bt=(\d+)/);
       var vb = vbm ? parseInt(vbm[1]) : 0;
       if (vb > bestBt) { bestBt = vb; bestUrl = vu; }
     }
