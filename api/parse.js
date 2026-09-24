@@ -2255,16 +2255,25 @@ async function parseTiktok(originalUrl) {
   if (!title && descMatch) title = descMatch[1];
 
   // 扫描所有视频URL，按bt值选最高码率
-    var allVidRe = /https:\\?\/\\?\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
-    var allVidRe = /https:\/\/[^"\\]*tos-alisg-p[v e][^"\\]*/g;
-    var vm, bestBt = -1, bestUrl = '';
-    while ((vm = allVidRe.exec(html)) !== null) {
-      var vu = tiktokUnescapeUrl(vm[0]);
-      var vbm = vu.match(/bt=(\d+)/);
-      var vb = vbm ? parseInt(vbm[1]) : 0;
-      if (vb > bestBt) { bestBt = vb; bestUrl = vu; }
+  {
+    var scanIdx = 0, scanBestBt = -1, scanBestUrl = '';
+    while ((scanIdx = html.indexOf('tos-alisg-p', scanIdx)) !== -1) {
+      var sStart = scanIdx;
+      for (var si = scanIdx; si > scanIdx - 300; si--) {
+        if (html[si] === '"' || html[si] === "'") { sStart = si + 1; break; }
+      }
+      var sEnd = scanIdx;
+      for (var sj = scanIdx; sj < scanIdx + 500; sj++) {
+        if (html[sj] === '"' || html[sj] === "'") { sEnd = sj; break; }
+      }
+      var sRaw = html.substring(sStart, sEnd);
+      var sUrl = sRaw.replace(/\\\//g, '/').replace(/\\u002F/g, '/');
+      var sBtM = sUrl.match(/bt=(\d+)/);
+      var sBt = sBtM ? parseInt(sBtM[1]) : 0;
+      if (sBt > scanBestBt) { scanBestBt = sBt; scanBestUrl = sUrl; }
+      scanIdx += 10;
     }
-    if (bestUrl) videoUrl = bestUrl;
+    if (scanBestUrl) videoUrl = scanBestUrl;
   }
 
   // 2b URL作者ID兜底
