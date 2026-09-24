@@ -1538,6 +1538,55 @@ async function parseKuaishou(originalUrl) {
   if (!finalAuthor) finalAuthor = findFromHtmlMeta(html);
 
 
+  // 新增：直接正则匹配 snake_case 字段（v.m.chenzhongtech.com 页面格式）
+  if (!finalAuthor || !finalAuthor.name || !finalAuthor.id) {
+    var scName = html.match(/"user_name"\s*:\s*"([^"]+)"/);
+    var scId = html.match(/"user_id"\s*:\s*(\d{5,15})/);
+    var scAvatar = html.match(/"headurl"\s*:\s*"([^"]+)"/) || html.match(/"headUrl"\s*:\s*"([^"]+)"/);
+    if (scName || scId) {
+      if (!finalAuthor) finalAuthor = { name: "", id: "", avatar: "" };
+      if (!finalAuthor.name && scName) finalAuthor.name = decodeText(scName[1]);
+      if (!finalAuthor.id && scId) finalAuthor.id = String(scId[1]);
+      if (!finalAuthor.avatar && scAvatar) finalAuthor.avatar = normalizeUrl(scAvatar[1]);
+    }
+  }
+
+  // BugPK 2.0 补全：SSR 作者信息不全时调用
+  var needAuthor = !finalAuthor || !finalAuthor.name || !finalAuthor.id;
+  var needVideo = !video.videoUrl;
+  if (needAuthor || needVideo) {
+    try {
+      var bpRes = await _bugpk2Fetch(originalUrl, 10000);
+      if (bpRes.ok) {
+        var bpJson = await bpRes.json();
+        var bd = bpJson && bpJson.data;
+        if (bd) {
+          if (needAuthor && bd.author) {
+            if (!finalAuthor) finalAuthor = { name: "", id: "", avatar: "" };
+            if (!finalAuthor.name && bd.author.name) finalAuthor.name = bd.author.name;
+            if (!finalAuthor.id && bd.author.id) finalAuthor.id = bd.author.id;
+            if (!finalAuthor.avatar && bd.author.avatar) finalAuthor.avatar = bd.author.avatar;
+          }
+          if (needVideo && bd.url) video.videoUrl = bd.url;
+          if (!video.cover && bd.cover) video.cover = bd.cover;
+          if (!video.title && bd.title) video.title = bd.title;
+          if (bd.images && bd.images.length && (!video.images || !video.images.length)) {
+            video.images = bd.images.filter(function(u){ return u && u.indexOf("http") === 0; });
+          }
+          if (bd.live_photo && bd.live_photo.length) {
+            var lpVids = [];
+            bd.live_photo.forEach(function(lp) { if (lp.video) lpVids.push(lp.video); });
+            if (lpVids.length) {
+              if (!video.videoUrl) video.videoUrl = lpVids[0];
+              if (!video.videoList) video.videoList = [];
+              video.videoList = video.videoList.concat(lpVids);
+            }
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
   // 
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
