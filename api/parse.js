@@ -2222,7 +2222,7 @@ async function parseTiktok(originalUrl) {
       if (!title && ip.title) title = ip.title;
     }
     var v = item.video || {};
-    if (!videoUrl) videoUrl = tiktokUrlFromField(v.playAddr) || tiktokUrlFromField(v.downloadAddr);
+    if (!videoUrl) videoUrl = tiktokUrlFromField(v.downloadAddr) || tiktokUrlFromField(v.playAddr);
     if (!cover) cover = tiktokUrlFromField(v.cover) || tiktokUrlFromField(v.originCover);
     if (!videoUrl) videoUrl = tiktokUrlFromField(item.playAddr);
     if (!cover) cover = tiktokUrlFromField(item.cover);
@@ -2234,13 +2234,14 @@ async function parseTiktok(originalUrl) {
   var allAvatar = html.match(/"avatarLarger":"([^"]+)"/g);
   var paMatch = html.match(/"playAddr":"([^"]+)"/);
   var coverMatch = html.match(/"cover":"([^"]+)"/);
+  var daMatch = html.match(/"downloadAddr":"([^"]+)"/);
   var descMatch = html.match(/"desc":"([^"]+)"/);
 
   if (!authorName && allNick && allNick.length) authorName = allNick[allNick.length - 1].match(/"nickname":"([^"]+)"/)[1];
   if (!authorId && allUid && allUid.length) authorId = allUid[allUid.length - 1].match(/"uniqueId":"([^"]+)"/)[1];
   if (!authorAvatar && allAvatar && allAvatar.length) authorAvatar = tiktokUnescapeUrl(allAvatar[allAvatar.length - 1].match(/"avatarLarger":"([^"]+)"/)[1]);
+  if (!videoUrl && daMatch) videoUrl = tiktokUnescapeUrl(daMatch[1]);
   if (!videoUrl && paMatch) videoUrl = tiktokUnescapeUrl(paMatch[1]);
-  if (!cover && coverMatch) cover = tiktokUnescapeUrl(coverMatch[1]);
   if (!title && descMatch) title = descMatch[1];
 
   // 2b URL作者ID兜底
