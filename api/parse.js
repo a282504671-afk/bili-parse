@@ -2275,19 +2275,20 @@ async function parseTiktok(originalUrl) {
   var mdUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   try {
     var mdGet = await fetch('https://musicaldown.com/en', { headers: { 'User-Agent': mdUA } });
+    var mdGet = await fetch('https://musicaldown.com/en', { headers: { 'User-Agent': mdUA } });
     var mdHtml = await mdGet.text();
+    var mdCookie = '';
+    var mdSetCookie = mdGet.headers.get('set-cookie');
+    if (mdSetCookie) { mdCookie = mdSetCookie.split(',').map(function(c){return c.split(';')[0].trim();}).join('; '); }
     var mdInputName = (mdHtml.match(/name="(_[a-zA-Z]+)"[^>]*id="link_url"/) || [])[1] || '';
     var mdHidden = mdHtml.match(/name="(_[a-zA-Z]+)"[^>]*type="hidden"[^>]*value="([^"]*)"/);
     if (mdInputName && mdHidden) {
       var mdPostBody = mdInputName + '=' + encodeURIComponent(originalUrl || realUrl) +
         '&' + mdHidden[1] + '=' + mdHidden[2] + '&verify=1';
-      var mdPost = await fetch('https://musicaldown.com/download', {
-        method: 'POST',
-        headers: { 'User-Agent': mdUA, 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://musicaldown.com/en' },
-        body: mdPostBody
-      });
+      var mdPostHeaders = { 'User-Agent': mdUA, 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://musicaldown.com/en' };
+      if (mdCookie) mdPostHeaders['Cookie'] = mdCookie;
+      var mdPost = await fetch('https://musicaldown.com/download', { method: 'POST', headers: mdPostHeaders, body: mdPostBody });
       var mdResult = await mdPost.text();
-      var mdAllLinks = [...mdResult.matchAll(/href="(https:\/\/fastdl\.muscdn\.app\/v3\?token=([^"]+))"/g)];
       for (var mdi = 0; mdi < mdAllLinks.length; mdi++) {
         var mdToken = mdAllLinks[mdi][2];
         var mdPayload = mdToken.split('.')[1];
