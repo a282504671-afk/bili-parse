@@ -2269,12 +2269,10 @@ async function parseTiktok(originalUrl) {
 
   // 图集图片兜底2：直接从HTML提取photomode图片URL
     var directImgRe = /https:\/\/[^"\\]*tos-alisg-i-photomode[^"\\]*/g;
-    var directImgRe = /https:\\?\\/\\?\\/[^"\\]*tos-alisg-i-photomode[^"\\]*/g;
     var dm;
     var seenDirect = {};
     while ((dm = directImgRe.exec(html)) !== null) {
       var dk = du.match(/photomode-sg\/([^~?]+)/);
-      var dk = du.match(/photomode-sg\\/([^~?]+)/);
       var dkey = dk ? dk[1] : du;
       if (!seenDirect[dkey]) { seenDirect[dkey] = true; images.push(du); }
     }
