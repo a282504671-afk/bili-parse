@@ -2272,46 +2272,25 @@ async function parseTiktok(originalUrl) {
   }
 
   // ③ 视频走 MusicalDown 拿1080P
-  var mdUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  // ③ tikwm 补高清
   try {
-    var mdGet = await fetch('https://musicaldown.com/en', { headers: { 'User-Agent': mdUA } });
-    var mdGet = await fetch('https://musicaldown.com/en', { headers: { 'User-Agent': mdUA } });
-    var mdHtml = await mdGet.text();
-    var mdCookie = '';
-    var mdSetCookie = mdGet.headers.get('set-cookie');
-    if (mdSetCookie) { mdCookie = mdSetCookie.split(',').map(function(c){return c.split(';')[0].trim();}).join('; '); }
-    var mdInputName = (mdHtml.match(/name="(_[a-zA-Z]+)"[^>]*id="link_url"/) || [])[1] || '';
-    var mdHidden = mdHtml.match(/name="(_[a-zA-Z]+)"[^>]*type="hidden"[^>]*value="([^"]*)"/);
-    if (mdInputName && mdHidden) {
-      var mdPostBody = mdInputName + '=' + encodeURIComponent(originalUrl || realUrl) +
-        '&' + mdHidden[1] + '=' + mdHidden[2] + '&verify=1';
-      var mdPostHeaders = { 'User-Agent': mdUA, 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://musicaldown.com/en' };
-      if (mdCookie) mdPostHeaders['Cookie'] = mdCookie;
-      var mdPost = await fetch('https://musicaldown.com/download', { method: 'POST', headers: mdPostHeaders, body: mdPostBody });
-      var mdResult = await mdPost.text();
-      for (var mdi = 0; mdi < mdAllLinks.length; mdi++) {
-        var mdToken = mdAllLinks[mdi][2];
-        var mdPayload = mdToken.split('.')[1];
-        try {
-          mdPayload = mdPayload.replace(/-/g, '+').replace(/_/g, '/');
-          while (mdPayload.length % 4) mdPayload += '=';
-          var mdJson = JSON.parse(atob(mdPayload));
-          if (mdJson.filename && mdJson.filename.indexOf('[HD]') >= 0 && mdJson.url) {
-            videoUrl = mdJson.url;
-          } else if (!videoUrl && mdJson.url && mdJson.url.indexOf('.mp4') >= 0) {
-            videoUrl = mdJson.url;
-          }
-        } catch(e) {}
-      }
-      if (!authorId) {
-        var mdAuthor = mdResult.match(/@([a-zA-Z0-9._]+)/);
-        if (mdAuthor) authorId = mdAuthor[1];
+    var tkRes = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(originalUrl || realUrl) + '&hd=1', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (tkRes.ok) {
+      var tkJson = await tkRes.json();
+      if (tkJson.code === 0 && tkJson.data) {
+        var td = tkJson.data;
+        if (td.hdplay) videoUrl = td.hdplay;
+        else if (td.play) videoUrl = td.play;
+        if (!authorName) authorName = (td.author && td.author.nickname) || '';
+        if (!authorId) authorId = (td.author && td.author.unique_id) || '';
+        if (!authorAvatar) authorAvatar = (td.author && td.author.avatar) || '';
+        if (!cover) cover = td.cover || '';
+        if (!title) title = td.title || '';
       }
     }
   } catch(e) {}
-
-  if (!videoUrl) return fail('mdLen=' + (typeof mdHtml !== 'undefined' ? mdHtml.length : 'undef') + ' preview=' + (typeof mdHtml !== 'undefined' ? mdHtml.substring(0,200) : 'undef'));
-
   return ok('tiktok', {
     type: 'video', title: title || '', desc: title || '',
     author: { name: authorName || '', id: authorId, avatar: authorAvatar || '' },
