@@ -510,11 +510,10 @@ function _buildDouyinOk(data, url, isImageType, videoList) {
 async function _bugpkGetZjcdn(originalUrl) {
   try {
     var bpRes = await _bugpk2Fetch(originalUrl);
-    if (!bpRes.ok) return null;
+    if (!bpRes.ok) return { debug: 'HTTP ' + bpRes.status };
     var bpJson = await bpRes.json();
-    if (bpJson.code !== 200 || !bpJson.data) return null;
+    if (bpJson.code !== 200 || !bpJson.data) return { debug: 'code=' + bpJson.code + ' msg=' + (bpJson.msg||'') };
     var bpData = bpJson.data;
-    // ?????zjcdn ???? video_backup????????????? images ??
     var bpUrl = bpData.url || '';
     if (bpUrl && bpUrl.indexOf('http') === 0 && bpUrl.indexOf('aweme.snssdk.com') < 0) {
       return { ok: true, result: _buildDouyinOk(bpData, bpUrl, false) };
@@ -524,36 +523,29 @@ async function _bugpkGetZjcdn(originalUrl) {
       for (var bbi = 0; bbi < bpData.video_backup.length; bbi++) {
         var bbUrl = bpData.video_backup[bbi] && bpData.video_backup[bbi].url || '';
         if (bbUrl && bbUrl.indexOf('http') === 0 && bbUrl.indexOf('aweme.snssdk.com') < 0) {
-          var bbBrMatch = bbUrl.match(/[?&]br=(\\d+)/);
+          var bbBrMatch = bbUrl.match(/[?&]br=(\d+)/);
           var bbBr = bbBrMatch ? parseInt(bbBrMatch[1]) : 0;
           if (bbBr > bestBbBr) { bestBbBr = bbBr; bestBbUrl = bbUrl; }
         }
       }
       if (bestBbUrl) return { ok: true, result: _buildDouyinOk(bpData, bestBbUrl, false) };
     }
-    // ===== 动图/实况照片(live_photo)：每个元素带 image + video，视频为无水印直链 =====
     if (bpData.live_photo && bpData.live_photo.length) {
-      var lpVideos = [];
-      var lpImages = [];
+      var lpVideos = [], lpImages = [];
       for (var lpi = 0; lpi < bpData.live_photo.length; lpi++) {
         var lpItem = bpData.live_photo[lpi] || {};
-        var lpVid = lpItem.video || '';
-        var lpImg = lpItem.image || '';
-        if (lpVid && lpVid.indexOf('http') === 0 && lpVideos.indexOf(lpVid) < 0) lpVideos.push(lpVid);
-        if (lpImg && lpImg.indexOf('http') === 0 && lpImages.indexOf(lpImg) < 0) lpImages.push(lpImg);
+        if (lpItem.video && lpItem.video.indexOf('http') === 0 && lpVideos.indexOf(lpItem.video) < 0) lpVideos.push(lpItem.video);
+        if (lpItem.image && lpItem.image.indexOf('http') === 0 && lpImages.indexOf(lpItem.image) < 0) lpImages.push(lpItem.image);
       }
       if (lpVideos.length) {
         if (lpImages.length) bpData.images = lpImages;
         return { ok: true, result: _buildDouyinOk(bpData, lpVideos[0], false, lpVideos) };
       }
     }
-    // ?? zjcdn ??????????BugPK ??????? images?
     var bpImages = _extractImageList(bpData.images);
-    if (bpImages.length) {
-      return { ok: true, result: _buildDouyinOk(bpData, '', true) };
-    }
-    return null;
-  } catch (e) { return null; }
+    if (bpImages.length) return { ok: true, result: _buildDouyinOk(bpData, '', true) };
+    return { debug: 'no_valid_url, bpUrl=' + bpUrl.substring(0,120) + ', has_backup=' + !!bpData.video_backup + ', has_live=' + !!bpData.live_photo };
+  } catch (e) { return { debug: 'exception: ' + e.message }; }
 }
 
 
@@ -683,14 +675,13 @@ async function parseDouyin(originalUrl) {
   var bpCacheKey = itemId ? ('dy:' + itemId) : ('dy:url:' + originalUrl);
   var bpCached = _cacheGet(bpCacheKey);
   if (bpCached) return bpCached;
-
   var bpPrimary = await _bugpkGetZjcdn(originalUrl);
-  if (bpPrimary) {
+  if (bpPrimary && bpPrimary.ok) {
     _cacheSet(bpCacheKey, bpPrimary.result);
     return bpPrimary.result;
   }
-
-  return fail('未提取到抖音视频地址');
+  var dbg = (bpPrimary && bpPrimary.debug) ? bpPrimary.debug : 'unknown';
+  return fail('未提取到抖音: ' + dbg);
 }
 async function parseBilibili(originalUrl) {
   var realUrl = originalUrl;
