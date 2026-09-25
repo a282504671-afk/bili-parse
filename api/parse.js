@@ -513,8 +513,7 @@ class SM3 {
   }
 }
 
-function resultEncrypt(longStr) {
-  const table = "Dkdpgh2ZmsQB80/MfvV36XI1R45-WUAlEixNLwoqYTOPuzKFjJnry79HbGcaStCe=";
+function resultEncryptTable(longStr, table) {
   let result = "", round = -1;
   for (let i = 0; i < (longStr.length / 3) * 4; i++) {
     if (Math.floor(i / 4) !== round) round++;
@@ -527,6 +526,9 @@ function resultEncrypt(longStr) {
     else result += table[n & 63];
   }
   return result;
+}
+function resultEncrypt(longStr) {
+  return resultEncryptTable(longStr, "Dkdpgh2ZmsQB80/MfvV36XI1R45-WUAlEixNLwoqYTOPuzKFjJnry79HbGcaStCe=");
 }
 function genRandom(rand, opt) {
   return [
@@ -541,7 +543,7 @@ function generate_a_bogus(query, ua) {
   const st = Date.now();
   const urlHash = sm3.sum(sm3.sum(query + "cus"));
   const cusHash = sm3.sum(sm3.sum("cus"));
-  const uaHash = sm3.sum(resultEncrypt(rc4(ua, String.fromCharCode(0.00390625, 1, 14))));
+  const uaHash = sm3.sum(resultEncryptTable(rc4(ua, String.fromCharCode(0.00390625, 1, 14)), "ckdp1h4ZKsUB80/Mfvw36XIgR25+WQAlEi7NLboqYTOPuzmFjJnryx9HVGDaStCe"));
   const et = Date.now();
   const b = [];
   b[8] = 3; b[10] = et; b[16] = st; b[18] = 44; b[19] = [1, 0, 1, 5];
