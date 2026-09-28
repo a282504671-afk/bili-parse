@@ -959,13 +959,24 @@ async function parseDouyinDirect(originalUrl) {
 
 async function parseDouyin(originalUrl) {
   var itemId = extractDouyinItemId(originalUrl);
-  var bpCacheKey = itemId ? ('dy:' + itemId) : ('dy:url:' + originalUrl);
-  var bpCached = _cacheGet(bpCacheKey);
-  if (bpCached) return bpCached;
+  var cacheKey = itemId ? ('dy:' + itemId) : ('dy:url:' + originalUrl);
+  var cached = _cacheGet(cacheKey);
+  if (cached) return cached;
 
+  // 优先自抓取（不依赖BugPK）
+  try {
+    var direct = await parseDouyinDirect(originalUrl);
+    if (direct && direct.code === 200 && direct.data && direct.data.url) {
+      _cacheSet(cacheKey, direct);
+      return direct;
+    }
+    console.log('自抓取返回非200:', JSON.stringify(direct).slice(0,300));
+  } catch(e) { console.error('抖音自抓取异常:', e && e.message ? e.message : e); }
+
+  // 自抓取失败才用BugPK兜底
   var bpPrimary = await _bugpkGetZjcdn(originalUrl);
   if (bpPrimary) {
-    _cacheSet(bpCacheKey, bpPrimary.result);
+    _cacheSet(cacheKey, bpPrimary.result);
     return bpPrimary.result;
   }
 
