@@ -678,6 +678,285 @@ function extractDouyinDataFromHtml(html) {
   } catch(e) { return null; }
 }
 
+function dyRandomStr(len) {
+  var c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789=";
+  var s = "";
+  for (var i = 0; i < len; i++) s += c[Math.floor(Math.random() * c.length)];
+  return s;
+}
+function dyRc4(pt, key) {
+  var s = [];
+  for (var i = 0; i < 256; i++) s[i] = i;
+  var j = 0;
+  for (var i = 0; i < 256; i++) {
+    j = (j + s[i] + key.charCodeAt(i % key.length)) % 256;
+    var t = s[i]; s[i] = s[j]; s[j] = t;
+  }
+  var i = 0; j = 0;
+  var out = [];
+  for (var k = 0; k < pt.length; k++) {
+    i = (i + 1) % 256; j = (j + s[i]) % 256;
+    var t = s[i]; s[i] = s[j]; s[j] = t;
+    out.push(String.fromCharCode(s[(s[i] + s[j]) % 256] ^ pt.charCodeAt(k)));
+  }
+  return out.join("");
+}
+function dyLe(e, r) { return ((e << (r % 32)) | (e >>> (32 - (r % 32)))) >>> 0; }
+function dyDe(e) { return e < 16 ? 2043430169 : 2055708042; }
+function dyPe(e, r, t, n) { return e < 16 ? (r ^ t ^ n) >>> 0 : ((r & t) | (r & n) | (t & n)) >>> 0; }
+function dyHe(e, r, t, n) { return e < 16 ? (r ^ t ^ n) >>> 0 : ((r & t) | (~r & n)) >>> 0; }
+
+function dySM3Reset(self) {
+  self.reg = [1937774191, 1226093241, 388252375, 3666478592, 2842636476, 372324522, 3817729613, 2969243214];
+  self.chunk = []; self.size = 0;
+}
+function dySM3Write(self, input) {
+  var bytes = typeof input === "string"
+    ? Array.from(encodeURIComponent(input).replace(/%([0-9A-F]{2})/g, function(_, h) { return String.fromCharCode(parseInt("0x" + h)); }), function(ch) { return ch.charCodeAt(0); })
+    : input;
+  self.size += bytes.length;
+  var free = 64 - self.chunk.length;
+  if (bytes.length < free) { self.chunk = self.chunk.concat(bytes); return; }
+  self.chunk = self.chunk.concat(bytes.slice(0, free));
+  while (self.chunk.length >= 64) {
+    dySM3Compress(self, self.chunk);
+    if (free < bytes.length) self.chunk = bytes.slice(free, Math.min(free + 64, bytes.length));
+    else self.chunk = [];
+    free += 64;
+  }
+}
+function dySM3Compress(self, t) {
+  var w = new Array(132);
+  for (var i = 0; i < 16; i++) w[i] = ((t[4*i] << 24) | (t[4*i+1] << 16) | (t[4*i+2] << 8) | t[4*i+3]) >>> 0;
+  for (var i = 16; i < 68; i++) {
+    var a = w[i-16] ^ w[i-9] ^ dyLe(w[i-3], 15);
+    a = a ^ dyLe(a, 15) ^ dyLe(a, 23);
+    w[i] = (a ^ dyLe(w[i-13], 7) ^ w[i-6]) >>> 0;
+  }
+  for (var i = 0; i < 64; i++) w[i+68] = (w[i] ^ w[i+4]) >>> 0;
+  var state = self.reg.slice(0);
+  for (var i = 0; i < 64; i++) {
+    var ss1 = dyLe((((dyLe(state[0], 12) + state[4] + dyLe(dyDe(i), i)) >>> 0) & 0xffffffff) >>> 0, 7);
+    var ss2 = (ss1 ^ dyLe(state[0], 12)) >>> 0;
+    var tt1 = (dyPe(i, state[0], state[1], state[2]) + state[3] + ss2 + w[i+68]) >>> 0;
+    var tt2 = (dyHe(i, state[4], state[5], state[6]) + state[7] + ss1 + w[i]) >>> 0;
+    state[3] = state[2]; state[2] = dyLe(state[1], 9); state[1] = state[0]; state[0] = tt1;
+    state[7] = state[6]; state[6] = dyLe(state[5], 19); state[5] = state[4];
+    state[4] = (tt2 ^ dyLe(tt2, 9) ^ dyLe(tt2, 17)) >>> 0;
+  }
+  for (var i = 0; i < 8; i++) self.reg[i] = (self.reg[i] ^ state[i]) >>> 0;
+}
+function dySM3Fill(self) {
+  var totalBits = 8 * self.size;
+  var mod = self.chunk.push(128) % 64;
+  if (64 - mod < 8) mod -= 64;
+  while (mod < 56) { self.chunk.push(0); mod += 1; }
+  for (var i = 0; i < 4; i++) self.chunk.push((Math.floor(totalBits / 4294967296) >>> (8 * (3 - i))) & 255);
+  for (var i = 0; i < 4; i++) self.chunk.push((totalBits >>> (8 * i)) & 255);
+}
+function dySM3Sum(input) {
+  var self = {};
+  dySM3Reset(self);
+  if (input) dySM3Write(self, input);
+  dySM3Fill(self);
+  for (var i = 0; i < self.chunk.length; i += 64) dySM3Compress(self, self.chunk.slice(i, i + 64));
+  var result = new Array(32);
+  for (var i = 0; i < 8; i++) {
+    var c = self.reg[i];
+    result[4*i+3] = (c & 255) >>> 0; c >>>= 8;
+    result[4*i+2] = (c & 255) >>> 0; c >>>= 8;
+    result[4*i+1] = (c & 255) >>> 0; c >>>= 8;
+    result[4*i] = (c & 255) >>> 0;
+  }
+  return result;
+}
+function dyResultEncryptTable(longStr, table) {
+  var result = "", round = -1;
+  for (var i = 0; i < (longStr.length / 3) * 4; i++) {
+    if (Math.floor(i / 4) !== round) round++;
+    var off = round * 3;
+    var n = (longStr.charCodeAt(off) << 16) | (longStr.charCodeAt(off+1) << 8) | longStr.charCodeAt(off+2);
+    var k = i % 4;
+    if (k === 0) result += table[(n & 16515072) >> 18];
+    else if (k === 1) result += table[(n & 258048) >> 12];
+    else if (k === 2) result += table[(n & 4032) >> 6];
+    else result += table[n & 63];
+  }
+  return result;
+}
+function dyGenRandom(rand, opt) {
+  return [
+    ((rand & 255 & 170) | (opt[0] & 85)) >>> 0,
+    ((rand & 255 & 85) | (opt[0] & 170)) >>> 0,
+    (((rand >> 8) & 255 & 170) | (opt[1] & 85)) >>> 0,
+    (((rand >> 8) & 255 & 85) | (opt[1] & 170)) >>> 0,
+  ];
+}
+function dyGenerateABogus(query, ua) {
+  var st = Date.now();
+  var urlHash = dySM3Sum(dySM3Sum ? dySM3Sum(query + "cus") : query + "cus");
+  // urlHash is array of bytes
+  var cusHash = dySM3Sum("cus");
+  var uaHash = dySM3Sum(dyResultEncryptTable(dyRc4(ua, String.fromCharCode(0.00390625, 1, 14)), "ckdp1h4ZKsUB80/Mfvw36XIgR25+WQAlEi7NLboqYTOPuzmFjJnryx9HVGDaStCe"));
+  var et = Date.now();
+  var b = [];
+  b[8] = 3; b[10] = et; b[16] = st; b[18] = 44; b[19] = [1, 0, 1, 5];
+  b[20] = (st >> 24) & 255; b[21] = (st >> 16) & 255; b[22] = (st >> 8) & 255; b[23] = st & 255;
+  b[24] = Math.floor(st / 4294967296); b[25] = Math.floor(st / 1099511627776);
+  b[31] = 1; b[37] = 14;
+  b[38] = urlHash[21]; b[39] = urlHash[22];
+  b[40] = cusHash[21]; b[41] = cusHash[22];
+  b[42] = uaHash[23]; b[43] = uaHash[24];
+  b[44] = (et >> 24) & 255; b[45] = (et >> 16) & 255; b[46] = (et >> 8) & 255; b[47] = et & 255;
+  b[48] = 3; b[49] = Math.floor(et / 4294967296); b[50] = Math.floor(et / 1099511627776);
+  b[51] = 6241; b[52] = (6241 >> 24) & 255; b[53] = (6241 >> 16) & 255; b[54] = (6241 >> 8) & 255; b[55] = 6241 & 255;
+  b[56] = 6383; b[57] = 6383 & 255; b[58] = (6383 >> 8) & 255; b[59] = (6383 >> 16) & 255; b[60] = (6383 >> 24) & 255;
+  var we = "1536|747|1536|834|0|30|0|0|1536|834|1536|864|1525|747|24|24|Win32";
+  var wb = [];
+  for (var i = 0; i < we.length; i++) wb.push(we.charCodeAt(i));
+  b[64] = wb.length; b[65] = wb.length & 255; b[66] = (wb.length >> 8) & 255;
+  b[72] = b[18]^b[20]^b[26]^b[30]^b[38]^b[40]^b[42]^b[21]^b[27]^b[31]^b[35]^b[39]^b[41]^b[43]^b[22]^b[28]^b[32]^b[36]^b[23]^b[29]^b[33]^b[37]^b[44]^b[45]^b[46]^b[47]^b[48]^b[49]^b[50]^b[24]^b[25]^b[52]^b[53]^b[54]^b[55]^b[57]^b[58]^b[59]^b[60]^b[65]^b[66]^b[70]^b[71];
+  var bb = [b[18],b[20],b[52],b[26],b[30],b[34],b[58],b[38],b[40],b[53],b[42],b[21],b[27],b[54],b[55],b[31],b[35],b[57],b[39],b[41],b[43],b[22],b[28],b[32],b[60],b[36],b[23],b[29],b[33],b[37],b[44],b[45],b[59],b[46],b[47],b[48],b[49],b[50],b[24],b[25],b[65],b[66],b[70],b[71]];
+  bb = bb.concat(wb).concat(b[72]);
+  var randomPart = String.fromCharCode.apply(null, dyGenRandom(Math.random()*10000,[3,45])) + String.fromCharCode.apply(null, dyGenRandom(Math.random()*10000,[1,0])) + String.fromCharCode.apply(null, dyGenRandom(Math.random()*10000,[1,5]));
+  var rc4Part = dyRc4(String.fromCharCode.apply(null, bb), String.fromCharCode(121));
+  return dyResultEncryptTable(randomPart + rc4Part, "Dkdpgh2ZmsQB80/MfvV36XI1R45-WUAlEixNLwoqYTOPuzKFjJnry79HbGcaStCe=") + "=";
+}
+
+async function dyFollowRedirects(startUrl) {
+  var cur = startUrl;
+  for (var i = 0; i < 8; i++) {
+    try { if (new URL(cur).host === "www.douyin.com" || new URL(cur).host === "www.iesdouyin.com") return cur; } catch(e) {}
+    try {
+      var res = await fetch(cur, { method: "GET", redirect: "manual", headers: { "User-Agent": UA } });
+      if (!res || res.status < 300 || res.status >= 400) break;
+      var loc = res.headers.get("location");
+      if (!loc) break;
+      cur = new URL(loc, cur).toString();
+    } catch(e) { break; }
+  }
+  return cur;
+}
+function dyGetVideoId(url) {
+  try {
+    var u = new URL(url);
+    var k;
+    var keys = ["modal_id", "aweme_id", "id", "vid"];
+    for (var ki = 0; ki < keys.length; ki++) {
+      k = u.searchParams.get(keys[ki]);
+      if (k && /^\d{15,}/.test(k)) return k;
+    }
+    var m = u.pathname.match(/\/video\/(\d+)/);
+    if (m) return m[1];
+    m = u.pathname.match(/\/(\d{18,})/);
+    if (m) return m[1];
+    return null;
+  } catch(e) { return null; }
+}
+async function dyGetTtwid() {
+  try {
+    var res = await fetch("https://ttwid.bytedance.com/ttwid/union/register/", {
+      method: "POST",
+      headers: { "content-type": "application/json", "User-Agent": UA },
+      body: JSON.stringify({ region: "cn", aid: 6383, need_t: 1, service: "www.douyin.com", domain: ".douyin.com" })
+    });
+    var sc = res.headers.get("set-cookie") || "";
+    var m = sc.match(/(?:^|,\s*)ttwid=([^;\s]+)/i);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch(e) { return null; }
+}
+async function dyFetchAwemeDetail(awemeId) {
+  var referer = "https://www.douyin.com/video/" + awemeId;
+  try { await fetch(referer, { headers: { "User-Agent": UA } }); } catch(e) {}
+  var ttwid = await dyGetTtwid();
+  if (!ttwid) ttwid = "1%7CvDWCB8tYdKPbdOlqwNTkDPhizBaV9i91KjYLKJbqurg%7C1723536402%7C314e63000decb79f46b8ff255560b29f4d8c57352dad465b41977db4830b4c7e";
+  for (var attempt = 0; attempt < 2; attempt++) {
+    var msToken = dyRandomStr(107);
+    var params = new URLSearchParams({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web", aweme_id: awemeId, msToken: msToken });
+    var query = params.toString();
+    var aBogus = dyGenerateABogus(query, UA);
+    try {
+      var res = await fetch("https://www.douyin.com/aweme/v1/web/aweme/detail/?" + query + "&a_bogus=" + encodeURIComponent(aBogus), {
+        headers: { "accept": "application/json", "User-Agent": UA, "referer": referer, "cookie": "ttwid=" + ttwid }
+      });
+      var json = await res.json();
+      if (json.aweme_detail) return { ok: true, detail: json };
+      if (attempt === 1) return { ok: false, reason: (json.status_msg || "API未返回数据") };
+    } catch(e) {
+      if (attempt === 1) return { ok: false, reason: e.message };
+    }
+  }
+  return { ok: false, reason: "请求失败" };
+}
+async function dyResolveOriginal(vid) {
+  var cur = "https://aweme.snssdk.com/aweme/v1/play/?video_id=" + encodeURIComponent(vid) + "&ratio=default&line=0";
+  for (var i = 0; i < 3; i++) {
+    try {
+      var res = await fetch(cur, { method: "GET", redirect: "manual", headers: { "User-Agent": UA } });
+      if (!res || res.status < 300 || res.status >= 400) break;
+      var loc = res.headers.get("location");
+      if (!loc) break;
+      cur = loc;
+    } catch(e) { break; }
+  }
+  return cur.replace(/^http:\/\//, "https://");
+}
+
+async function parseDouyinDirect(originalUrl) {
+  var resolved = await dyFollowRedirects(originalUrl);
+  var awemeId = dyGetVideoId(resolved) || extractDouyinItemId(originalUrl);
+  if (!awemeId) return fail("无法提取抖音视频ID");
+  var detail = await dyFetchAwemeDetail(awemeId);
+  if (!detail.ok) return fail(detail.reason || "抖音API请求失败");
+  var d = detail.detail.aweme_detail;
+  var author = d.author || {};
+  var images = d.images || d.image_list || [];
+  var result = {
+    type: images.length ? "image" : "video",
+    title: d.desc || "",
+    desc: d.desc || "",
+    author: {
+      name: author.nickname || "",
+      id: author.unique_id || author.short_id || author.uid || "",
+      sec_uid: author.sec_uid || "",
+      avatar: (author.avatar_thumb && author.avatar_thumb.url_list && author.avatar_thumb.url_list[0]) || ""
+    },
+    cover: "",
+    url: "", images: [], live_photo: [],
+    duration: d.video ? Math.round((d.video.duration || 0) / 1000) : 0
+  };
+  if (d.video) {
+    result.cover = (d.video.origin_cover && d.video.origin_cover.url_list && d.video.origin_cover.url_list[0]) ||
+                   (d.video.cover && d.video.cover.url_list && d.video.cover.url_list[0]) || "";
+  }
+  if (images.length) {
+    for (var ii = 0; ii < images.length; ii++) {
+      var img = images[ii];
+      if (img.url_list && img.url_list[0]) result.images.push(img.url_list[0]);
+      if (img.video && img.video.play_addr && img.video.play_addr.url_list && img.video.play_addr.url_list[0]) {
+        result.live_photo.push({ image: img.url_list ? img.url_list[0] : "", video: img.video.play_addr.url_list[0] });
+      }
+    }
+    if (result.live_photo.length) result.type = "live";
+  } else {
+    var bestUrl = "", bestBr = -1;
+    var brList = (d.video && d.video.bitRateList) || [];
+    for (var bi = 0; bi < brList.length; bi++) {
+      var br = brList[bi];
+      var urls = (br.play_addr && br.play_addr.url_list) || [];
+      for (var ui = 0; ui < urls.length; ui++) {
+        if ((br.bitRate || 0) > bestBr) { bestUrl = urls[ui]; bestBr = br.bitRate; }
+      }
+    }
+    if (!bestUrl) bestUrl = (d.video && d.video.play_addr && d.video.play_addr.url_list && d.video.play_addr.url_list[0]) || "";
+    result.url = bestUrl.replace(/playwm/g, "play");
+    var vid = (d.video && d.video.play_addr && d.video.play_addr.uri) || (d.video && d.video.uri);
+    if (vid) result.url = await dyResolveOriginal(vid);
+  }
+  return ok('douyin', result);
+}
+
+
 async function parseDouyin(originalUrl) {
   var itemId = extractDouyinItemId(originalUrl);
   var bpCacheKey = itemId ? ('dy:' + itemId) : ('dy:url:' + originalUrl);
@@ -2558,208 +2837,26 @@ async function parseWeibo(originalUrl) {
 
 // ===== 微信视频�?=====
 async function parseWeixin(originalUrl) {
-
-  // If finder.video.qq.com direct URL, return directly
-  if (/finder\.video\.qq\.com/.test(originalUrl)) {
-    return ok('weixin', {
-      _source: 'direct',
-      type: 'video',
-      title: '',
-      desc: '',
-      author: { name: '', id: '', avatar: '' },
-      cover: '',
-      url: originalUrl,
-      images: [],
-    });
-  }
-  // 重试3次，每次使用不同的策�?
-  var lastErr = null;
-  var attempts = [
-    { ua: UA_WECHAT, label: 'WeChat UA' },
-    { ua: UA, label: 'Chrome UA' },
-  ];
-
-  for (var t = 0; t < attempts.length; t++) {
-    try {
-      var html = await fetchHtml(originalUrl, { 'User-Agent': attempts[t].ua });
-      var title = '', cover = '', videoUrl = '', desc = '';
-      var author = '', authorAvatar = '';
-
-      // 策略1: 查找 __INITIAL_STATE__
-      var match = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\});/);
-      if (match) {
-        try {
-          var state = JSON.parse(match[1]);
-          var vd = state.videoData || state.finderData || state.shareData || state.mediaData || {};
-          if (vd.url || (vd.video && vd.video.url)) {
-            title = vd.title || vd.desc || vd.caption || '';
-            desc = vd.desc || vd.title || vd.caption || '';
-            cover = vd.cover || vd.thumb || vd.pic || (vd.coverUrl ? vd.coverUrl : '');
-            videoUrl = vd.url || (vd.video ? vd.video.url : '') || vd.playUrl || vd.play_url || '';
-            if (vd.author) { author = vd.author.name || vd.author.nickname || ''; authorAvatar = vd.author.avatar || vd.author.headUrl || ''; }
-          }
-        } catch(e) {}
-      }
-
-      // 策略2: __NEXT_DATA__
-      if (!videoUrl) {
-        var m2 = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/);
-        if (m2) {
-          try { var nd = JSON.parse(m2[1]); if (nd.props && nd.props.pageProps) { var pp = nd.props.pageProps; videoUrl = pp.url || pp.videoUrl || ''; title = pp.title || ''; cover = pp.cover || pp.image || ''; } } catch(e) {}
-        }
-      }
-
-      // 策略3: og:video meta标签
-      if (!videoUrl) {
-        var m;
-        m = html.match(/<meta\s+property=["']og:video:secure_url["']\s+content=["']([^"']+)["']/i);
-        if (m) videoUrl = m[1];
-        if (!videoUrl) { m = html.match(/<meta\s+property=["']og:video["']\s+content=["']([^"']+)["']/i); if (m) videoUrl = m[1]; }
-        m = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
-        if (m) title = m[1];
-        m = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-        if (m) cover = m[1];
-      }
-
-      // 策略4: 查找任何 JSON-LD �?video 相关 script
-      if (!videoUrl) {
-        var ldMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/);
-        if (ldMatch) {
-          try { var ld = JSON.parse(ldMatch[1]); if (ld.url) videoUrl = ld.url; if (ld.name) title = ld.name; if (ld.thumbnailUrl) cover = ld.thumbnailUrl; } catch(e) {}
-        }
-      }
-
-      // 策略5: 直接在HTML中搜索video/mp4链接
-      if (!videoUrl) {
-        var urlMatch = html.match(/https?:\/\/finder\.video\.qq\.com\/[^\s"']+(?:mp4|m3u8)[^\s"']*/i);
-        if (urlMatch) videoUrl = urlMatch[0];
-      }
-
-      if (videoUrl) {
-        if (!author) {
-          var am = html.match(/<p[^>]*class=["']finder-card-name["'][^>]*>([^<]+)<\/p>/i);
-          if (am) author = am[1].trim();
-          if (!author) { am = html.match(/"nickname"\s*[:=]\s*"([^"]+)"/i); if (am) author = am[1]; }
-          if (!author) { am = html.match(/"name"\s*[:=]\s*"([^"]+)"/i); if (am) author = am[1]; }
-          if (!author) { am = html.match(/"author_name"\s*[:=]\s*"([^"]+)"/i); if (am) author = am[1]; }
-        }
-        if (!authorAvatar) {
-          var avm = html.match(/"avatar"\s*[:=]\s*"([^"]+)"/i);
-          if (avm) authorAvatar = avm[1];
-        }
-        return ok('weixin', {
-          _source: 'html',
-          type: 'video', title: title || desc || '', desc: desc || title || '',
-          author: { name: author || '', id: '', avatar: authorAvatar || '' },
-          cover: cover || '', url: videoUrl, images: [],
-        });
-      }
-    } catch(e) { lastErr = e; }
-  }
-
-  
-  // 先调微信API获取元数据（作者/标题/封面，免费）
-  var wxTitle = '', wxAuthor = '', wxAvatar = '', wxCover = '';
   try {
-    var wxHeaders = {
-      'User-Agent': UA,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-      'Referer': 'https://channels.weixin.qq.com/',
-      'Origin': 'https://channels.weixin.qq.com',
-      'X-Requested-With': 'XMLHttpRequest',
-    };
-    var shortUri = originalUrl.match(/sph\/(\w+)/);
-    if (!shortUri) shortUri = originalUrl.match(/[\?&]id=(\w+)/);
-    if (shortUri) {
-      var wxRes = await fetch('https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info', {
-        method: 'POST', headers: wxHeaders,
-        body: JSON.stringify({ baseReq: { generalToken: '' }, shortUri: shortUri[1] })
-      });
-      if (wxRes.ok) {
-        var wxJson = await wxRes.json();
-        if (wxJson.errCode === 0 && wxJson.data && wxJson.data.feedInfo) {
-          wxTitle = wxJson.data.feedInfo.description || '';
-          wxCover = wxJson.data.feedInfo.coverUrl || '';
-          if (wxJson.data.authorInfo) {
-            wxAuthor = wxJson.data.authorInfo.nickname || '';
-            wxAvatar = wxJson.data.authorInfo.headImgUrl || '';
-          }
-        }
-      }
-    }
-  } catch(e) {}
-
-  // 尝试 ALAPI 解析
-  try {
-    var alapiRes = await fetch('https://v3.alapi.cn/api/video/url?token=2hgqmh0sy3mcknephdn5yl9u2qubul&url=' + encodeURIComponent(originalUrl), {
-      headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(60000)
-    });
-    if (alapiRes.ok) {
-      var alapiJson = await alapiRes.json();
-      if (alapiJson.success && alapiJson.data && alapiJson.data.video_url) {
-        var d = alapiJson.data;
-        return ok('weixin', {
-          _source: 'alapi',
-          type: 'video',
-          title: wxTitle || d.title || '',
-          desc: wxTitle || d.title || '',
-          author: { name: wxAuthor || d.author || '', id: '', avatar: wxAvatar || '' },
-          cover: wxCover || d.cover_url || '', url: d.video_url || '', images: [],
-        });
-      }
-    }
-  } catch(e) {}
-
-// 尝试 52api 解析
-  try {
-    var apiRes = await fetch('https://www.52api.cn/api/sph?key=SgAYGMs3AxwD47faiPUKUzM06D&url=' + encodeURIComponent(originalUrl), {
-      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
-    });
-    if (apiRes.ok) {
-      var apiJson = await apiRes.json();
-      if (apiJson.code === 200 && apiJson.data && apiJson.data.video_url) {
-        var d = apiJson.data;
-        return ok('weixin', {
-          _source: '52api',
-          type: 'video', title: d.video_title || d.video_desc || '', desc: d.video_desc || d.video_title || '',
-          author: { name: d.video_author || '', id: '', avatar: d.video_avatar || '' },
-          cover: d.video_cover || '', url: d.video_url || '', images: [],
-        });
-      }
-    }
-  } catch(e) {}
-
-  // 全部HTML抓取失败，走BugPK
-  try {
-    var res = await _bugpk2Fetch(originalUrl, 8000);
+    var res = await _bugpk2Fetch(originalUrl, 10000);
     if (res.ok) {
       var json = await res.json();
-      if (json.code === 200 && json.data && json.data.url) {
+      if (json.code === 200 && json.data) {
         var d = json.data;
-        var videoUrl = d.url || '';
-        // 清除画质限制参数（X-snsvideoflag/flag/basedata/sign），让CDN返回原始最高画质
-        if (videoUrl) {
-          videoUrl = videoUrl.replace(/&(?:X-snsvideoflag|flag|basedata|sign)=[^&]*/g, '');
-        }
         return ok('weixin', {
-          _source: 'bugpk',
-          type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
-          author: { name: (d.author && d.author.name) || d.nickname || d.author_name || '', id: (d.author && d.author.id) || d.author_id || d.uid || d.user_id || '', avatar: (d.author && d.author.avatar) || d.avatar || d.author_avatar || d.face || '' },
-          cover: d.cover || '', url: videoUrl, images: [],
+          type: 'video',
+          title: d.title || d.desc || '',
+          desc: d.desc || d.title || '',
+          author: { name: (d.author && d.author.name) || '', id: (d.author && String(d.author.id)) || '', avatar: (d.author && d.author.avatar) || '' },
+          cover: d.cover || '',
+          url: d.url || '',
+          images: d.images || [],
         });
       }
     }
-  } catch(e) {}
-
-  return fail('微信视频号解析失败');
+  } catch(e) { console.error('微信BugPK失败:', e); }
+  return fail('微信视频号解析失败（BUGPK）');
 }
-
-
-
-
 async function handleRequest(request) {
 const url = new URL(request.url);
   const headers = {
