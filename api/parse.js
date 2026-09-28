@@ -436,7 +436,8 @@ function sign_reply(params, userAgent) {
 globalThis.sign_datail = sign_datail;
 globalThis.sign = sign;
 })();
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const UA = 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+const DY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const BUGPK2_API = 'https://api-new.ifphp.com/api/svparse';
 const BUGPK2_KEY = 'bp_live_5c44b116706699e861c2f0c4a7dc386ccebd9ad568a6985b48896c360da3fef9';
 // BUGPK2.0 统一请求：老 api.bugpk.com 不稳定，全部改走新平台（需 X-API-Key）
@@ -828,7 +829,7 @@ async function dyFollowRedirects(startUrl) {
   for (var i = 0; i < 8; i++) {
     try { if (new URL(cur).host === "www.douyin.com" || new URL(cur).host === "www.iesdouyin.com") return cur; } catch(e) {}
     try {
-      var res = await fetch(cur, { method: "GET", redirect: "manual", headers: { "User-Agent": UA } });
+      var res = await fetch(cur, { method: "GET", redirect: "manual", headers: { "User-Agent": DY_UA } });
       if (!res || res.status < 300 || res.status >= 400) break;
       var loc = res.headers.get("location");
       if (!loc) break;
@@ -857,7 +858,7 @@ async function dyGetTtwid() {
   try {
     var res = await fetch("https://ttwid.bytedance.com/ttwid/union/register/", {
       method: "POST",
-      headers: { "content-type": "application/json", "User-Agent": UA },
+      headers: { "content-type": "application/json", "User-Agent": DY_UA },
       body: JSON.stringify({ region: "cn", aid: 6383, need_t: 1, service: "www.douyin.com", domain: ".douyin.com" })
     });
     var sc = res.headers.get("set-cookie") || "";
@@ -867,17 +868,17 @@ async function dyGetTtwid() {
 }
 async function dyFetchAwemeDetail(awemeId) {
   var referer = "https://www.douyin.com/video/" + awemeId;
-  try { await fetch(referer, { headers: { "User-Agent": UA } }); } catch(e) {}
+  try { await fetch(referer, { headers: { "User-Agent": DY_UA } }); } catch(e) {}
   var ttwid = await dyGetTtwid();
   if (!ttwid) { console.error("ttwid 获取失败，不带 cookie 继续"); }
   for (var attempt = 0; attempt < 2; attempt++) {
     var msToken = dyRandomStr(107);
     var params = new URLSearchParams({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web", aweme_id: awemeId, msToken: msToken });
     var query = params.toString();
-    var aBogus = dyGenerateABogus(query, UA);
+    var aBogus = dyGenerateABogus(query, DY_UA);
     try {
       var res = await fetch("https://www.douyin.com/aweme/v1/web/aweme/detail/?" + query + "&a_bogus=" + encodeURIComponent(aBogus), {
-        headers: { "accept": "application/json", "User-Agent": UA, "referer": referer, "cookie": "ttwid=" + ttwid, "sec-ch-ua": "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"", "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": "\"Windows\"", "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin" }
+        headers: { "accept": "application/json", "User-Agent": DY_UA, "referer": referer, "cookie": "ttwid=" + ttwid, "sec-ch-ua": "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"", "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": "\"Windows\"", "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin" }
       });
       var json = await res.json();
       if (json.aweme_detail) return { ok: true, detail: json };
@@ -892,7 +893,7 @@ async function dyResolveOriginal(vid) {
   var cur = "https://aweme.snssdk.com/aweme/v1/play/?video_id=" + encodeURIComponent(vid) + "&ratio=default&line=0";
   for (var i = 0; i < 3; i++) {
     try {
-      var res = await fetch(cur, { method: "GET", redirect: "manual", headers: { "User-Agent": UA } });
+      var res = await fetch(cur, { method: "GET", redirect: "manual", headers: { "User-Agent": DY_UA } });
       if (!res || res.status < 300 || res.status >= 400) break;
       var loc = res.headers.get("location");
       if (!loc) break;
