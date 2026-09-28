@@ -971,7 +971,7 @@ async function parseDouyin(originalUrl) {
       _cacheSet(cacheKey, direct);
       return direct;
     }
-    console.log('自抓取返回非200:', JSON.stringify(direct).slice(0,300));
+    if (direct && direct.msg) return fail('自抓取: ' + direct.msg);
   } catch(e) { console.error('抖音自抓取异常:', e && e.message ? e.message : e); }
 
   // 自抓取失败才用BugPK兜底
@@ -981,7 +981,8 @@ async function parseDouyin(originalUrl) {
     return bpPrimary.result;
   }
 
-  return fail('未提取到抖音视频地址');
+  return fail('抖音解析失败: 自抓取和BugPK均未成功');
+  // 如果走到这里，检查上面的 console.error
 }
 async function parseBilibili(originalUrl) {
   var realUrl = originalUrl;
