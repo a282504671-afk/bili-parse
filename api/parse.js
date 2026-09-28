@@ -2827,27 +2827,62 @@ async function parseAcfun(originalUrl) {
   });
 }
 
-// ===== 微博 =====
+// ===== 微博（直接调官方API） =====
 async function parseWeibo(originalUrl) {
-  // 
   try {
-    var res = await _bugpk2Fetch(originalUrl, 8000);
-    if (res.ok) {
-      var json = await res.json();
-      if (json.code === 200 && json.data && json.data.url) {
-        var d = json.data;
-        return ok('weibo', {
-          type: 'video', title: d.title || d.desc || '', desc: d.desc || d.title || '',
-          author: { name: (d.author && d.author.name) || '', id: (d.author && String(d.author.id)) || '', avatar: (d.author && d.author.avatar) || '' },
-          cover: d.cover || '', url: d.url || '', images: [],
-        });
-      }
+    // 提取视频ID
+    var videoId = '';
+    if (originalUrl.indexOf('weibo.com/tv/') >= 0 || originalUrl.indexOf('video.weibo.com') >= 0) {
+      var m = originalUrl.match(/fid=(\d+)/);
+      if (m) videoId = m[1];
+      if (!videoId) { var m2 = originalUrl.match(/tv\/(?:show|v)\/([0-9:]+)/); if (m2) videoId = m2[1]; }
     }
-  } catch(e) {}
+    if (!videoId) {
+      // 跟随重定向
+      var rr = await fetch(originalUrl, { redirect: 'manual', headers: { 'User-Agent': UA } });
+      var loc = rr.headers.get('location') || '';
+      if (loc) { var m3 = loc.match(/fid=(\d+)/); if (m3) videoId = m3[1]; }
+    }
+    if (!videoId) return fail('无法提取微博视频ID');
 
-  return fail('微博解析失败（BUGPK 代理）');
+    var pagePath = '/tv/show/' + videoId;
+    var apiUrl = 'https://weibo.com/tv/api/component?page=' + encodeURIComponent(pagePath);
+    var postData = 'data=' + encodeURIComponent(JSON.stringify({ Component_Play_Playinfo: { oid: videoId } }));
+
+    var res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Referer': 'https://weibo.com/',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: postData
+    });
+    var json = await res.json();
+    if (json.code === 100000 && json.data && json.data.Component_Play_Playinfo) {
+      var info = json.data.Component_Play_Playinfo;
+      var urls = info.urls || {};
+      var bestUrl = '', bestQ = 0;
+      for (var q in urls) {
+        var priority = q.indexOf('2K') >= 0 ? 4 : q.indexOf('1080P') >= 0 ? 3 : q.indexOf('720P') >= 0 ? 2 : q.indexOf('480P') >= 0 ? 1 : 0;
+        if (priority > bestQ) { bestUrl = urls[q].indexOf('http') === 0 ? urls[q] : 'https:' + urls[q]; bestQ = priority; }
+      }
+      return ok('weibo', {
+        type: 'video',
+        title: info.title || '',
+        desc: info.title || '',
+        author: { name: info.author || '', id: String(info.author_id || ''), avatar: info.avatar ? (info.avatar.indexOf('http') === 0 ? info.avatar : 'https:' + info.avatar) : '' },
+        cover: info.cover_image ? (info.cover_image.indexOf('http') === 0 ? info.cover_image : 'https:' + info.cover_image) : '',
+        url: bestUrl,
+        duration: info.duration_time || 0,
+        images: []
+      });
+    }
+    return fail('微博API返回错误: ' + (json.msg || json.code));
+  } catch(e) {
+    return fail('微博解析失败: ' + (e.message || e));
+  }
 }
-
 // ===== 微信视频�?=====
 async function parseWeixin(originalUrl) {
   try {
