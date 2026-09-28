@@ -436,7 +436,7 @@ function sign_reply(params, userAgent) {
 globalThis.sign_datail = sign_datail;
 globalThis.sign = sign;
 })();
-const UA = 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const BUGPK2_API = 'https://api-new.ifphp.com/api/svparse';
 const BUGPK2_KEY = 'bp_live_5c44b116706699e861c2f0c4a7dc386ccebd9ad568a6985b48896c360da3fef9';
 // BUGPK2.0 统一请求：老 api.bugpk.com 不稳定，全部改走新平台（需 X-API-Key）
@@ -752,7 +752,7 @@ function dySM3Fill(self) {
   if (64 - mod < 8) mod -= 64;
   while (mod < 56) { self.chunk.push(0); mod += 1; }
   for (var i = 0; i < 4; i++) self.chunk.push((Math.floor(totalBits / 4294967296) >>> (8 * (3 - i))) & 255);
-  for (var i = 0; i < 4; i++) self.chunk.push((totalBits >>> (8 * i)) & 255);
+  for (var i = 0; i < 4; i++) self.chunk.push((totalBits >>> (8 * (3 - i))) & 255);
 }
 function dySM3Sum(input) {
   var self = {};
@@ -794,9 +794,9 @@ function dyGenRandom(rand, opt) {
 }
 function dyGenerateABogus(query, ua) {
   var st = Date.now();
-  var urlHash = dySM3Sum(dySM3Sum ? dySM3Sum(query + "cus") : query + "cus");
+  var urlHash = dySM3Sum(dySM3Sum(query + "cus"));
   // urlHash is array of bytes
-  var cusHash = dySM3Sum("cus");
+  var cusHash = dySM3Sum(dySM3Sum("cus"));
   var uaHash = dySM3Sum(dyResultEncryptTable(dyRc4(ua, String.fromCharCode(0.00390625, 1, 14)), "ckdp1h4ZKsUB80/Mfvw36XIgR25+WQAlEi7NLboqYTOPuzmFjJnryx9HVGDaStCe"));
   var et = Date.now();
   var b = [];
@@ -869,7 +869,7 @@ async function dyFetchAwemeDetail(awemeId) {
   var referer = "https://www.douyin.com/video/" + awemeId;
   try { await fetch(referer, { headers: { "User-Agent": UA } }); } catch(e) {}
   var ttwid = await dyGetTtwid();
-  if (!ttwid) ttwid = "1%7CvDWCB8tYdKPbdOlqwNTkDPhizBaV9i91KjYLKJbqurg%7C1723536402%7C314e63000decb79f46b8ff255560b29f4d8c57352dad465b41977db4830b4c7e";
+  if (!ttwid) { console.error("ttwid 获取失败，不带 cookie 继续"); }
   for (var attempt = 0; attempt < 2; attempt++) {
     var msToken = dyRandomStr(107);
     var params = new URLSearchParams({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web", aweme_id: awemeId, msToken: msToken });
@@ -877,7 +877,7 @@ async function dyFetchAwemeDetail(awemeId) {
     var aBogus = dyGenerateABogus(query, UA);
     try {
       var res = await fetch("https://www.douyin.com/aweme/v1/web/aweme/detail/?" + query + "&a_bogus=" + encodeURIComponent(aBogus), {
-        headers: { "accept": "application/json", "User-Agent": UA, "referer": referer, "cookie": "ttwid=" + ttwid }
+        headers: { "accept": "application/json", "User-Agent": UA, "referer": referer, "cookie": "ttwid=" + ttwid, "sec-ch-ua": "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"", "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": "\"Windows\"", "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin" }
       });
       var json = await res.json();
       if (json.aweme_detail) return { ok: true, detail: json };
