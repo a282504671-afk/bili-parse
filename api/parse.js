@@ -2803,7 +2803,7 @@ async function parseToutiao(originalUrl) {
       cover: cover, url: videoUrl, images: []
     });
   } catch (e) {
-    var fb = await _universalFallback(originalUrl, 'toutiao'); if (fb) return ok('toutiao', fb); return fail('今日头条解析失败');}
+    var fb = await _universalFallback(originalUrl, 'toutiao'); if (fb) return ok('toutiao', fb); return fail('今日头条解析失败');
   }
 }
 // ===== AcFun=====
