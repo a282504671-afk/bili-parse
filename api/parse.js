@@ -463,6 +463,61 @@ async function _bugpk2Fetch(targetUrl, timeoutMs) {
   }
   return fetch(bpUrl, { headers: bpHeaders, signal: AbortSignal.timeout(bpTimeout) });
 }
+
+// ===== 统一兜底：BugPK2.0(ifphp) → 520api(ccwu) =====
+async function _universalFallback(originalUrl, platform) {
+  // 1. BugPK2.0 新接口
+  try {
+    var res = await _bugpk2Fetch(originalUrl, 10000);
+    if (res.ok) {
+      var json = await res.json();
+      if (json.code === 200 && json.data && json.data.url) {
+        var d = json.data;
+        return {
+          type: d.type || 'video',
+          title: d.title || d.desc || '',
+          desc: d.desc || d.title || '',
+          author: { name: (d.author && d.author.name) || '', id: (d.author && String(d.author.id)) || '', avatar: (d.author && d.author.avatar) || '' },
+          cover: d.cover || '',
+          url: d.url || '',
+          images: d.images || [],
+          live_photo: d.live_photo || [],
+          duration: d.duration || 0,
+          _fallback: 'bugpk2'
+        };
+      }
+    }
+  } catch(e) { console.error('兜底BugPK2失败:', e); }
+
+  // 2. 520api 接口
+  try {
+    var res2 = await fetch('https://520api.ccwu.cc/?url=' + encodeURIComponent(originalUrl), {
+      headers: { 'User-Agent': UA, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (res2.ok) {
+      var json2 = await res2.json();
+      if (json2.code === 200 && json2.data && json2.data.url) {
+        var d2 = json2.data;
+        return {
+          type: d2.type || 'video',
+          title: d2.title || d2.desc || '',
+          desc: d2.desc || d2.title || '',
+          author: { name: (d2.author && d2.author.name) || '', id: (d2.author && String(d2.author.id)) || '', avatar: (d2.author && d2.author.avatar) || '' },
+          cover: d2.cover || '',
+          url: d2.url || '',
+          images: d2.images || [],
+          live_photo: d2.live_photo || [],
+          duration: d2.duration || 0,
+          _fallback: '520api'
+        };
+      }
+    }
+  } catch(e) { console.error('兜底520api失败:', e); }
+
+  return null;
+}
+
 const UA_WECHAT = 'Mozilla/5.0 (Linux; Android 12; Pixel 6 Build/SQ3A.220705.003.A1) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/107.0.5304.141 Mobile Safari/537.36 XWEB/5060 MMWEBSDK/20221206 MMWEBID/8060 MicroMessenger/8.0.32.2380(0x28002034) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64';
 
 // ===== parse cache (by itemId, TTL 30min) =====
@@ -981,8 +1036,11 @@ async function parseDouyin(originalUrl) {
     return bpPrimary.result;
   }
 
-  return fail('抖音解析失败: 自抓取和BugPK均未成功');
-  // 如果走到这里，检查上面的 console.error
+  // 统一兜底：BugPK2.0 → 520api
+  var fb = await _universalFallback(originalUrl, 'douyin');
+  if (fb) return ok('douyin', fb);
+
+  return fail('抖音解析失败: 所有兜底均未成功');
 }
 async function parseBilibili(originalUrl) {
   var realUrl = originalUrl;
@@ -1632,7 +1690,7 @@ async function parseBilibili(originalUrl) {
     } catch(e) {}
   }
 
-  if (!info) return fail('获取B站视频信息失败，可能被海外IP限制');
+  if (!info) { var fb = await _universalFallback(originalUrl, 'bilibili'); if (fb) return ok('bilibili', fb); return fail('获取B站视频信息失败'); }
 
   // 
   if (!videoUrl && info.cid && info.aid) {
@@ -1931,7 +1989,7 @@ async function parseKuaishou(originalUrl) {
   // 
   finalAuthor = fillAvatarIfMissing(finalAuthor, html);
 
-  if (!video.videoUrl && !video.cover) return fail('未提取到快手视频地址');
+  if (!video.videoUrl && !video.cover) { var fb = await _universalFallback(originalUrl, 'kuaishou'); if (fb) return ok('kuaishou', fb); return fail('未提取到快手视频地址'); }
   // 从页面 JSON 数据中取真实图片
   if ((!video.images || !video.images.length) && !video.videoUrl) {
     var photoMatch = html.match(/\"photo\"\s*:\s*\{[^}]+\"coverUrls\"\s*:\s*\[([^\]]+)\]/);
@@ -2379,7 +2437,7 @@ async function parseXiaohongshu(originalUrl) {
     }
   }
 
-  if (!videoUrl && !images.length && !cover) return fail('未提取到小红书内容');
+  if (!videoUrl && !images.length && !cover) { var fb = await _universalFallback(originalUrl, 'xiaohongshu'); if (fb) return ok('xiaohongshu', fb); return fail('未提取到小红书内容'); }
 
   // ===== BugPK 兜底：始终尝试获取动图live_photo完整视频列表（不覆盖已有videoUrl） =====
 
@@ -2637,7 +2695,7 @@ async function parseXigua(originalUrl) {
     for (var pi = 0; pi < patterns.length; pi++) { var vm = html.match(patterns[pi]); if (vm) { videoUrl = vm[1].replace(/\\u002F/g, '/'); break; } }
   }
 
-  if (!title && !cover && !videoUrl) return fail('xigua parse failed');
+  if (!title && !cover && !videoUrl) { var fb = await _universalFallback(originalUrl, 'ixigua'); if (fb) return ok('ixigua', fb); return fail('西瓜解析失败'); }
 
   return ok('ixigua', {
     type: 'video', title: title || '', desc: title || '',
@@ -2745,7 +2803,7 @@ async function parseToutiao(originalUrl) {
       cover: cover, url: videoUrl, images: []
     });
   } catch (e) {
-    return fail('toutiao parse error: ' + (e && e.message ? e.message : String(e)));
+    var fb = await _universalFallback(originalUrl, 'toutiao'); if (fb) return ok('toutiao', fb); return fail('今日头条解析失败');}
   }
 }
 // ===== AcFun=====
@@ -2818,7 +2876,7 @@ async function parseAcfun(originalUrl) {
   var uidMatch = html.match(/\/upPage\/(\d+)/);
   if (uidMatch) authorId = uidMatch[1];
 
-  if (!title && !cover) return fail('未提取到A站视频信息');
+  if (!title && !cover) { var fb = await _universalFallback(originalUrl, 'acfun'); if (fb) return ok('acfun', fb); return fail('未提取到A站视频信息'); }
 
   return ok('acfun', {
     type: 'video', title: title || '', desc: title || '',
@@ -2845,7 +2903,7 @@ async function parseWeibo(originalUrl) {
       }
     }
   } catch(e) {}
-  return fail('微博解析失败（BUGPK）');
+  var fb = await _universalFallback(originalUrl, 'weibo'); if (fb) return ok('weibo', fb); return fail('微博解析失败');
 }
 
 // ===== 微信视频号（老BugPK接口） =====
@@ -2871,7 +2929,7 @@ async function parseWeixin(originalUrl) {
       }
     }
   } catch(e) { console.error('微信BugPK失败:', e); }
-  return fail('微信视频号解析失败（BUGPK）');
+  var fb = await _universalFallback(originalUrl, 'weixin'); if (fb) return ok('weixin', fb); return fail('微信视频号解析失败');
 }
 async function handleRequest(request) {
 const url = new URL(request.url);
