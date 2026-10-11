@@ -1023,6 +1023,9 @@ async function parseDouyin(originalUrl) {
   try {
     var direct = await parseDouyinDirect(originalUrl);
     if (direct && direct.code === 200 && direct.data && direct.data.url) {
+      // ★标明来源，便于判断走的是哪条路
+      direct.msg = '解析成功【自抓取】';
+      direct.source = 'self';
       _cacheSet(cacheKey, direct);
       return direct;
     }
@@ -1035,13 +1038,14 @@ async function parseDouyin(originalUrl) {
   // 自抓取失败才用BugPK兜底
   var bpPrimary = await _bugpkGetZjcdn(originalUrl);
   if (bpPrimary) {
+    if (bpPrimary.result) { bpPrimary.result.msg = '解析成功【BugPK兜底】'; bpPrimary.result.source = 'bugpk'; }
     _cacheSet(cacheKey, bpPrimary.result);
     return bpPrimary.result;
   }
 
   // 统一兜底：BugPK2.0 → 520api
   var fb = await _universalFallback(originalUrl, 'douyin');
-  if (fb) return ok('douyin', fb);
+  if (fb) { var rOk = ok('douyin', fb); rOk.msg = '解析成功【统一兜底】'; rOk.source = 'universal'; return rOk; }
 
   return fail('抖音解析失败: 所有兜底均未成功');
 }
