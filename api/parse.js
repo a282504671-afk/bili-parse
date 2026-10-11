@@ -923,17 +923,17 @@ async function dyGetTtwid() {
 }
 async function dyFetchAwemeDetail(awemeId) {
   var referer = "https://www.douyin.com/video/" + awemeId;
-  try { await fetch(referer, { headers: { "User-Agent": DY_UA } }); } catch(e) {}
+  try { await fetch(referer, { headers: { "User-Agent": UA } }); } catch(e) {}
   var ttwid = await dyGetTtwid();
-  if (!ttwid) { console.error("ttwid 获取失败，不带 cookie 继续"); }
+  if (!ttwid) ttwid = "1%7CvDWCB8tYdKPbdOlqwNTkDPhizBaV9i91KjYLKJbqurg%7C1723536402%7C314e63000decb79f46b8ff255560b29f4d8c57352dad465b41977db4830b4c7e";
   for (var attempt = 0; attempt < 2; attempt++) {
     var msToken = dyRandomStr(107);
     var params = new URLSearchParams({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web", aweme_id: awemeId, msToken: msToken });
     var query = params.toString();
-    var aBogus = dyGenerateABogus(query, DY_UA);
+    var aBogus = dyGenerateABogus(query, UA);
     try {
       var res = await fetch("https://www.douyin.com/aweme/v1/web/aweme/detail/?" + query + "&a_bogus=" + encodeURIComponent(aBogus), {
-        headers: { "accept": "application/json", "User-Agent": DY_UA, "referer": referer, "cookie": "ttwid=" + ttwid, "sec-ch-ua": "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"", "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": "\"Windows\"", "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin" }
+        headers: { "accept": "application/json", "User-Agent": UA, "referer": referer, "cookie": "ttwid=" + ttwid }
       });
       var json = await res.json();
       if (json.aweme_detail) return { ok: true, detail: json };
@@ -1026,7 +1026,10 @@ async function parseDouyin(originalUrl) {
       _cacheSet(cacheKey, direct);
       return direct;
     }
-    if (direct && direct.msg) return fail('自抓取: ' + direct.msg);
+    // ★自抓取失败【不能】直接 return：否则下面的 BugPK 兜底 / 统一兜底永远跑不到，
+    // 抖音一被风控（返回 "Blocked by ..." 而不是 JSON）就整条解析失败。
+    // 这里只记录原因，继续往下走兜底（与可用的 520api 版一致）。
+    if (direct && direct.msg) console.log('抖音自抓取未成功，转兜底: ' + direct.msg);
   } catch(e) { console.error('抖音自抓取异常:', e && e.message ? e.message : e); }
 
   // 自抓取失败才用BugPK兜底
